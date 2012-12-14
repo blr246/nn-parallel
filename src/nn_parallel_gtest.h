@@ -44,15 +44,26 @@ using namespace blr;
 template <typename T>
 void MatAssertNear(const cv::Mat& a, const cv::Mat& b, const T eps)
 {
+  int maxDifferenceCoords[2] = {0, 0};
+  T maxDifference = std::numeric_limits<T>::min();
   for (int r = 0; r < a.rows; ++r)
   {
     for (int c = 0; c < a.cols; ++c)
     {
       const T& aij = a.at<T>(r, c);
       const T& bij = b.at<T>(r, c);
-      ASSERT_NEAR(aij, bij, eps);
+      const T diff = std::abs(aij - bij);
+      if (diff > maxDifference)
+      {
+        maxDifference = diff;
+        maxDifferenceCoords[0] = r;
+        maxDifferenceCoords[1] = c;
+      }
     }
   }
+  ASSERT_LT(maxDifference, eps) << "Max difference violated by element ("
+                                << maxDifferenceCoords[0] << ","
+                                << maxDifferenceCoords[1] << ")";
 }
 
 template <typename T>
@@ -135,7 +146,7 @@ public:
   }
 };
 
-template <typename LayerType_>
+template <typename LayerType_, int TolExp = -6, int XScale = 10>
 struct LayerForwardBackwardFiniteDifferenceTester
 {
   template <typename T> struct NumericTypeToCvType;
@@ -152,26 +163,24 @@ struct LayerForwardBackwardFiniteDifferenceTester
   {
     const NumericType eps = static_cast<NumericType>(1e-6);
     // Perturb input by epsilon.
-    cv::Mat dX = X.clone();
     cv::Mat outA(LayerType::NumOutputs, 1, CvType);
     cv::Mat outB(LayerType::NumOutputs, 1, CvType);
     // Compute discrete difference formula for derivative.
     for (int i = 0; i < LayerType::NumInputs; ++i)
     {
+      cv::Mat dX = X.clone();
       dX.at<NumericType>(i, 0) -= eps;
       LayerType::Forward(dX, W, &outA);
       dX.at<NumericType>(i, 0) += 2 * eps;
       LayerType::Forward(dX, W, &outB);
-      dX.at<NumericType>(i, 0) -= eps;
       outB -= outA;
       outB /= 2 * eps;
       ddX->row(i) = outB.t();
     }
   }
 
-  static void TestDLdXBackward(const cv::Mat& X, const cv::Mat& W, cv::Mat* ddX)
+  static void TestDLdXBackward(const cv::Mat& X, const cv::Mat& W, const cv::Mat& Y, cv::Mat* ddX)
   {
-    cv::Mat Y = cv::Mat::ones(LayerType::NumOutputs, 1, CvType);
     cv::Mat dLdW = cv::Mat(W.size(), W.type());
     cv::Mat dLdX = cv::Mat(X.size(), X.type());
     cv::Mat dLdY = cv::Mat::zeros(LayerType::NumOutputs, 1, CvType);
@@ -206,9 +215,8 @@ struct LayerForwardBackwardFiniteDifferenceTester
     }
   }
 
-  static void TestDLdWBackward(const cv::Mat& X, const cv::Mat& W, cv::Mat* ddX)
+  static void TestDLdWBackward(const cv::Mat& X, const cv::Mat& W, const cv::Mat& Y, cv::Mat* ddX)
   {
-    cv::Mat Y = cv::Mat::ones(LayerType::NumOutputs, 1, CvType);
     cv::Mat dLdW = cv::Mat(W.size(), W.type());
     cv::Mat dLdX = cv::Mat(X.size(), X.type());
     cv::Mat dLdY = cv::Mat::zeros(LayerType::NumOutputs, 1, CvType);
@@ -227,9 +235,13 @@ struct LayerForwardBackwardFiniteDifferenceTester
     // Get a random input.
     cv::Mat X(LayerType::NumInputs, 1, CvType);
     MatRandUniform<NumericType>(&X);
-    X *= static_cast<NumericType>(10);
+    X *= static_cast<NumericType>(XScale);
+    X -= cv::Mat::ones(X.size(), X.type());
     cv::Mat W(LayerType::NumParameters, 1, CvType);
     InitWHelper::Init(&W);
+    cv::Mat Y(LayerType::NumOutputs, 1, CvType);
+    LayerType::Forward(X, W, &Y);
+    const NumericType eps = static_cast<NumericType>(std::pow(10.0, TolExp));
 
     {
       SCOPED_TRACE("X");
@@ -240,9 +252,8 @@ struct LayerForwardBackwardFiniteDifferenceTester
       MatRandUniform<NumericType>(&ddXBackward);
       // Compute forward/backward difference.
       TestDLdXForward(X, W, &ddXForward);
-      TestDLdXBackward(X, W, &ddXBackward);
+      TestDLdXBackward(X, W, Y, &ddXBackward);
       // Look for absolute differences.
-      const NumericType eps = static_cast<NumericType>(1e-6);
       MatAssertNear<NumericType>(ddXForward, ddXBackward.t(), eps);
     }
     if (W.rows > 0)
@@ -255,9 +266,7 @@ struct LayerForwardBackwardFiniteDifferenceTester
       MatRandUniform<NumericType>(&ddWBackward);
       // Compute forward/backward difference.
       TestDLdWForward(X, W, &ddWForward);
-      TestDLdWBackward(X, W, &ddWBackward);
-      // Look for absolute differences.
-      const NumericType eps = static_cast<NumericType>(1e-6);
+      TestDLdWBackward(X, W, Y, &ddWBackward);
       MatAssertNear<NumericType>(ddWForward, ddWBackward.t(), eps);
     }
   }
@@ -373,13 +382,33 @@ TEST(HiddenLinearTanh, All)
   }
 }
 
-TEST(Softmax, ForwardBackward)
+TEST(Softmax, All)
 {
-  typedef SoftMax<20, 4, double> LayerType;
-  ForwardBackwardTest<LayerType>::Run();
-  //LayerForwardBackwardFiniteDifferenceTester<LayerType>::Run();
+  typedef SoftMax<4, double> LayerType;
+  {
+    SCOPED_TRACE("Simple Forward-Backward");
+    ForwardBackwardTest<LayerType>::Run();
+  }
 }
 
+TEST(Softmax, IsNormalized)
+{
+  typedef SoftMax<10, double> LayerType;
+  typedef LayerType::NumericType NumericType;
+  cv::Mat X(LayerType::NumInputs, 1, CV_64F);
+  for (int testIdx = 0; testIdx < 10000; ++testIdx)
+  {
+    MatRandUniform<NumericType>(&X);
+    X *= static_cast<NumericType>(RandBound(100));
+    cv::Mat Y = cv::Mat(LayerType::NumOutputs, 1, CV_64F,
+                        cv::Scalar(std::numeric_limits<NumericType>::max()));
+    LayerType hl;
+    const cv::Mat Y0 = Y.clone();
+    hl.Forward(X, cv::Mat(), &Y);
+    const NumericType sum = static_cast<NumericType>(cv::sum(Y).val[0]);
+    ASSERT_NEAR(sum, 1, 1e-6);
+  }
+}
 
 }
 

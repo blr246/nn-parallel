@@ -98,19 +98,16 @@ public:
                        const cv::Mat& dLdY, cv::Mat* dLdW, cv::Mat* dLdX);
 };
 
-template <int NumInputs_, int NumClasses_, typename NumericType_ = double>
+template <int NumClasses_, typename NumericType_ = double>
 class SoftMax
-  : public StandardLayer<SoftMax<NumInputs_, NumClasses_, NumericType_> >
+  : public StandardLayer<SoftMax<NumClasses_, NumericType_> >
 {
 public:
   // API definitions.
   typedef NumericType_ NumericType;
-  enum { NumInputs = NumInputs_, };
+  enum { NumInputs = NumClasses_, };
   enum { NumOutputs = NumClasses_, };
-  enum { NumParameters = (NumOutputs - 1) * (NumInputs + 1), };
-
-  // Non-API definitions.
-  enum { ParamsLinearMat = (NumOutputs * NumInputs) - NumInputs };
+  enum { NumParameters = 0, };
 
   static void Forward(const cv::Mat& X, const cv::Mat& W, cv::Mat* Y);
 
@@ -176,6 +173,7 @@ void Passthrough<NumInputs_, NumericType_>
 }
 
 template <int NumInputs_, int NumOutputs_, typename NumericType_>
+inline
 void Linear<NumInputs_, NumOutputs_, NumericType_>
 ::Forward(const cv::Mat& X, const cv::Mat& W, cv::Mat* Y)
 {
@@ -189,6 +187,7 @@ void Linear<NumInputs_, NumOutputs_, NumericType_>
 }
 
 template <int NumInputs_, int NumOutputs_, typename NumericType_>
+inline
 void Linear<NumInputs_, NumOutputs_, NumericType_>
 ::Backward(const cv::Mat& X, const cv::Mat& W, const cv::Mat& /*Y*/,
               const cv::Mat& dLdY, cv::Mat* dLdW, cv::Mat* dLdX)
@@ -239,22 +238,13 @@ void Tanh<NumInputs_, NumericType_>
   }
 }
 
-template <int NumInputs_, int NumClasses_, typename NumericType_>
-void SoftMax<NumInputs_, NumClasses_, NumericType_>
-::Forward(const cv::Mat& X, const cv::Mat& W, cv::Mat* Y)
+template <int NumClasses_, typename NumericType_>
+inline
+void SoftMax<NumClasses_, NumericType_>
+::Forward(const cv::Mat& X, const cv::Mat& /*W*/, cv::Mat* Y)
 {
-  // Compute linear -> exp as in
-  //  Y = exp-(Mx + B).
-  const cv::Mat& M =
-    W(cv::Range(0, ParamsLinearMat), cv::Range::all()).reshape(1, NumOutputs - 1);
-  const cv::Mat& B =
-    W(cv::Range(ParamsLinearMat, NumParameters), cv::Range::all());
-  cv::Mat Yk_1 = Y->rowRange(0, NumOutputs - 1);
-  // Perform linear operation. Last set of weights is implictly 0.
-  //Yk_1 = M * X + B;
-  cv::gemm(M, X, 1.0, B, 1.0, Yk_1);
-  Y->at<NumericType>(NumOutputs - 1, 0) = 0;
-  // Perform nonlinear operation (ideally, vectorized).
+  // Compute softmax as in Y = exp(-X) / \sum{exp(-X)}
+  *Y = -X;
   cv::exp(*Y, *Y);
   // Perform Gibbs normalization.
   const NumericType normFactor =
@@ -262,10 +252,10 @@ void SoftMax<NumInputs_, NumClasses_, NumericType_>
   *Y *= normFactor;
 }
 
-template <int NumInputs_, int NumClasses_, typename NumericType_>
-void SoftMax<NumInputs_, NumClasses_, NumericType_>
-::Backward(const cv::Mat& X, const cv::Mat& W, const cv::Mat& Y,
-           const cv::Mat& /*dLdY*/, cv::Mat* dLdW, cv::Mat* dLdX)
+template <int NumClasses_, typename NumericType_>
+void SoftMax<NumClasses_, NumericType_>
+::Backward(const cv::Mat& /*X*/, const cv::Mat& /*W*/, const cv::Mat& Y,
+           const cv::Mat& dLdY, cv::Mat* /*dLdW*/, cv::Mat* dLdX)
 {
   // Compute index of output category.
   int classIdx = 0; 
@@ -283,39 +273,11 @@ void SoftMax<NumInputs_, NumClasses_, NumericType_>
       }
     }
   }
-  const cv::Mat& M =
-    W(cv::Range(0, ParamsLinearMat), cv::Range::all()).reshape(1, NumOutputs - 1);
-  cv::Mat dLdM =
-    (*dLdW)(cv::Range(0, ParamsLinearMat), cv::Range::all()).reshape(1, NumOutputs - 1);
-  cv::Mat dLdB =
-    (*dLdW)(cv::Range(ParamsLinearMat, NumParameters), cv::Range::all());
-  //const NumericType sumDLdY = static_cast<NumericType>(cv::sum(dLdY).val[0]);
-  const cv::Mat Yk_1 = Y.rowRange(0, NumOutputs - 1);
-  // Complete gradients when output is not the last class label. 
-  if (classIdx < (NumOutputs - 1))
-  {
-    // dL/dX = M^T Y - w_{y_i}^T
-    //*dLdX = M.t() * Yk_1 - M.row(classIdx).t();
-    cv::gemm(M, Yk_1, 1.0, M.row(classIdx), -1.0, *dLdX, CV_GEMM_A_T | CV_GEMM_C_T);
-    // dL/dB = F(X, W) - e_{y_i}
-    Yk_1.copyTo(dLdB);
-    dLdB.row(classIdx) -= 1;
-    // dL/dW = Y X^T - e_{y_i} X^T
-    //dLdM = Yk_1 * X.t();
-    cv::gemm(Yk_1, X, 1.0, cv::Mat(), 0.0, dLdM, CV_GEMM_B_T);
-    dLdM.row(classIdx) -= X.t();
-  }
-  else
-  {
-    // dL/dX = M^T Y - w_{y_i}^T
-    //*dLdX = M.t() * Y.rowRange(0, NumOutputs - 1);
-    cv::gemm(M, Y, 1.0, cv::Mat(), 0.0, *dLdX, CV_GEMM_A_T);
-    // dL/dB = F(X, W) - e_{y_i}
-    Yk_1.copyTo(dLdB);
-    // dL/dW = Y X^T - e_{y_i} X^T
-    //dLdM = Yk_1 * X.t();
-    cv::gemm(Yk_1, X, 1.0, cv::Mat(), 0.0, dLdM, CV_GEMM_B_T);
-  }
+  // Chain rule 
+  // dL/dX = (Y - e_{y_i} * X) * (e^T dLdY)
+  *dLdX = -Y;
+  dLdX->row(classIdx) += 1;
+  *dLdX *= cv::sum(dLdY).val[0];
 }
 
 } // end ns nn
