@@ -1,5 +1,5 @@
-#ifndef SRC_MATH_RAND_BOUND_GENERATOR_H
-#define SRC_MATH_RAND_BOUND_GENERATOR_H
+#ifndef SRC_RAND_BOUND_GENERATOR_H
+#define SRC_RAND_BOUND_GENERATOR_H
 #include <math.h>
 #include <cstdlib>
 #include <assert.h>
@@ -96,4 +96,4 @@ double RatioOfUniforms(const double mu, const double sig)
 using namespace math;
 } // end ns blr
 
-#endif //MATH_RAND_BOUND_GENERATOR_H
+#endif //SRC_RAND_BOUND_GENERATOR_H

@@ -1,11 +1,11 @@
-#ifndef _HPS_AMBULANCE_RAND_BOUND_GTEST_H_
-#define _HPS_AMBULANCE_RAND_BOUND_GTEST_H_
+#ifndef SRC_RAND_BOUND_GTEST_H
+#define SRC_RAND_BOUND_GTEST_H
 #include "rand_bound.h"
 #include "gtest/gtest.h"
 
-namespace _hps_ambulance_rand_bound_gtest_h_
+namespace _src_rand_bound_gtest_h_
 {
-using namespace hps;
+using namespace blr;
 
 TEST(RandBound, RatioOfUniforms)
 {
@@ -31,4 +31,4 @@ TEST(RandBound, RatioOfUniforms)
 
 }
 
-#endif //_HPS_AMBULANCE_RAND_BOUND_GTEST_H_
+#endif //SRC_RAND_BOUND_GTEST_H
