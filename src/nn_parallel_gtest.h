@@ -389,6 +389,10 @@ TEST(Softmax, All)
     SCOPED_TRACE("Simple Forward-Backward");
     ForwardBackwardTest<LayerType>::Run();
   }
+  {
+    SCOPED_TRACE("Gradients");
+    LayerForwardBackwardFiniteDifferenceTester<LayerType>::Run();
+  }
 }
 
 TEST(Softmax, IsNormalized)

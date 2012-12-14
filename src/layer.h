@@ -273,11 +273,8 @@ void SoftMax<NumClasses_, NumericType_>
       }
     }
   }
-  // Chain rule 
-  // dL/dX = (Y - e_{y_i} * X) * (e^T dLdY)
-  *dLdX = -Y;
-  dLdX->row(classIdx) += 1;
-  *dLdX *= cv::sum(dLdY).val[0];
+  cv::multiply(dLdY, Y, *dLdX, -1.0);
+  cv::scaleAdd(Y, Y.dot(dLdY), *dLdX, *dLdX);
 }
 
 } // end ns nn
