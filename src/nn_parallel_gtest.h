@@ -145,6 +145,7 @@ struct LayerForwardBackwardFiniteDifferenceTester
   typedef LayerType_ LayerType;
   typedef typename LayerType::NumericType NumericType;
   enum { CvType = NumericTypeToCvType<NumericType>::CvType, };
+  typedef typename TestUtils<LayerType>::RandomizeMatHelper<LayerType::NumParameters> InitWHelper;
 
   // Test dLdX.
   static void TestDLdXForward(const cv::Mat& X, const cv::Mat& W, cv::Mat* ddX)
@@ -189,8 +190,8 @@ struct LayerForwardBackwardFiniteDifferenceTester
     const NumericType eps = static_cast<NumericType>(1e-6);
     // Perturb input by epsilon.
     cv::Mat dW = W.clone();
-    cv::Mat outA(LayerType::NumParameters, 1, CvType);
-    cv::Mat outB(LayerType::NumParameters, 1, CvType);
+    cv::Mat outA(LayerType::NumOutputs, 1, CvType);
+    cv::Mat outB(LayerType::NumOutputs, 1, CvType);
     // Compute discrete difference formula for derivative.
     for (int i = 0; i < LayerType::NumParameters; ++i)
     {
@@ -228,7 +229,7 @@ struct LayerForwardBackwardFiniteDifferenceTester
     MatRandUniform<NumericType>(&X);
     X *= static_cast<NumericType>(10);
     cv::Mat W(LayerType::NumParameters, 1, CvType);
-    MatRandUniform<NumericType>(&W);
+    InitWHelper::Init(&W);
 
     {
       SCOPED_TRACE("X");
@@ -244,6 +245,7 @@ struct LayerForwardBackwardFiniteDifferenceTester
       const NumericType eps = static_cast<NumericType>(1e-6);
       MatAssertNear<NumericType>(ddXForward, ddXBackward.t(), eps);
     }
+    if (W.rows > 0)
     {
       SCOPED_TRACE("W");
       // Get a matrix to store gradients.
@@ -261,26 +263,114 @@ struct LayerForwardBackwardFiniteDifferenceTester
   }
 };
 
-TEST(Passthrough, ForwardBackward)
+TEST(Passthrough, All)
 {
+#if defined(NDEBUG)
   typedef Passthrough<100, double> LayerType;
-  ForwardBackwardTest<LayerType>::Run();
+#else
+  typedef Passthrough<10, double> LayerType;
+#endif
+  {
+    SCOPED_TRACE("Simple Forward-Backward");
+    ForwardBackwardTest<LayerType>::Run();
+  }
+  {
+    SCOPED_TRACE("Gradients");
+    LayerForwardBackwardFiniteDifferenceTester<LayerType>::Run();
+  }
 }
 
-TEST(HiddenLinearTanh, ForwardBackward)
+
+TEST(Linear, All)
 {
-  typedef HiddenLinearTanh<100, 200, double> LayerType;
-  ForwardBackwardTest<LayerType>::Run();
+#if defined(NDEBUG)
+  typedef Linear<100, 200, double> LayerType;
+#else
+  typedef Linear<10, 50, double> LayerType;
+#endif
+  {
+    SCOPED_TRACE("Simple Forward-Backward");
+    ForwardBackwardTest<LayerType>::Run();
+  }
+  {
+    SCOPED_TRACE("Gradients");
+    LayerForwardBackwardFiniteDifferenceTester<LayerType>::Run();
+  }
 }
 
-TEST(HiddenLinearTanh, LayerGradients)
+TEST(Tanh, All)
+{
+#if defined(NDEBUG)
+  typedef Tanh<100, double> LayerType;
+#else
+  typedef Tanh<10, double> LayerType;
+#endif
+  {
+    SCOPED_TRACE("Simple Forward-Backward");
+    ForwardBackwardTest<LayerType>::Run();
+  }
+  {
+    SCOPED_TRACE("Gradients");
+    LayerForwardBackwardFiniteDifferenceTester<LayerType>::Run();
+  }
+}
+
+template <int NumInputs_, int NumOutputs_, typename NumericType_>
+struct HiddenLinearTanh
+  : public StandardLayer<HiddenLinearTanh<NumInputs_, NumOutputs_, NumericType_> >
+{
+  // API definitions.
+  typedef NumericType_ NumericType;
+  enum { NumInputs = NumInputs_, };
+  enum { NumOutputs = NumOutputs_, };
+  typedef Linear<NumInputs, NumOutputs, NumericType> Linear;
+  typedef Tanh<NumOutputs, NumericType> Tanh;
+  enum { NumParameters = Linear::NumParameters + Tanh::NumParameters, };
+
+  static void Forward(const cv::Mat& X, const cv::Mat& W, cv::Mat* Y);
+
+  static void Backward(const cv::Mat& X, const cv::Mat& W, const cv::Mat& Y,
+                       const cv::Mat& dLdY, cv::Mat* dLdW, cv::Mat* dLdX);
+};
+
+template <int NumInputs_, int NumOutputs_, typename NumericType_>
+inline
+void HiddenLinearTanh<NumInputs_, NumOutputs_, NumericType_>
+::Forward(const cv::Mat& X, const cv::Mat& W, cv::Mat* Y)
+{
+  cv::Mat Y0(Y->size(), Y->type());
+  Linear::Forward(X, W, &Y0);
+  Tanh::Forward(Y0, cv::Mat(), Y);
+}
+
+template <int NumInputs_, int NumOutputs_, typename NumericType_>
+inline
+void HiddenLinearTanh<NumInputs_, NumOutputs_, NumericType_>
+::Backward(const cv::Mat& X, const cv::Mat& W, const cv::Mat& Y,
+           const cv::Mat& dLdY, cv::Mat* dLdW, cv::Mat* dLdX)
+{
+  cv::Mat XTanh(Y.size(), Y.type());
+  Linear::Forward(X, W, &XTanh);
+  cv::Mat dLdX0(dLdY.size(), dLdY.type());
+  Tanh::Backward(XTanh, cv::Mat(), Y, dLdY, NULL, &dLdX0);
+  Linear::Backward(X, W, XTanh, dLdX0, dLdW, dLdX);
+}
+
+TEST(HiddenLinearTanh, All)
 {
 #if defined(NDEBUG)
   typedef HiddenLinearTanh<100, 200, double> LayerType;
 #else
   typedef HiddenLinearTanh<10, 50, double> LayerType;
 #endif
-  LayerForwardBackwardFiniteDifferenceTester<LayerType>::Run();
+  {
+    SCOPED_TRACE("Simple Forward-Backward");
+    ForwardBackwardTest<LayerType>::Run();
+  }
+  {
+    SCOPED_TRACE("Gradients");
+    LayerForwardBackwardFiniteDifferenceTester<LayerType>::Run();
+  }
 }
 
 TEST(Softmax, ForwardBackward)

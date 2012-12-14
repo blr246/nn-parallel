@@ -61,12 +61,9 @@ public:
                        const cv::Mat& dLdY, cv::Mat* dLdW, cv::Mat* dLdX);
 };
 
-/**
- * <summary>Hidden layer with N inputs and M outputs.</summary>
- */
 template <int NumInputs_, int NumOutputs_, typename NumericType_ = double>
-class HiddenLinearTanh
-  : public StandardLayer<HiddenLinearTanh<NumInputs_, NumOutputs_, NumericType_> >
+class Linear
+  : public StandardLayer<Linear<NumInputs_, NumOutputs_, NumericType_> >
 {
 public:
   // API definitions.
@@ -77,6 +74,23 @@ public:
 
   // Non-API definitions.
   enum { ParamsLinearMat = NumInputs * NumOutputs };
+
+  static void Forward(const cv::Mat& X, const cv::Mat& W, cv::Mat* Y);
+
+  static void Backward(const cv::Mat& X, const cv::Mat& W, const cv::Mat& Y,
+                       const cv::Mat& dLdY, cv::Mat* dLdW, cv::Mat* dLdX);
+};
+
+template <int NumInputs_, typename NumericType_ = double>
+class Tanh
+  : public StandardLayer<Tanh<NumInputs_, NumericType_> >
+{
+public:
+  // API definitions.
+  typedef NumericType_ NumericType;
+  enum { NumInputs = NumInputs_, };
+  enum { NumOutputs = NumInputs_, };
+  enum { NumParameters = 0, };
 
   static void Forward(const cv::Mat& X, const cv::Mat& W, cv::Mat* Y);
 
@@ -162,57 +176,67 @@ void Passthrough<NumInputs_, NumericType_>
 }
 
 template <int NumInputs_, int NumOutputs_, typename NumericType_>
-void HiddenLinearTanh<NumInputs_, NumOutputs_, NumericType_>
+void Linear<NumInputs_, NumOutputs_, NumericType_>
 ::Forward(const cv::Mat& X, const cv::Mat& W, cv::Mat* Y)
 {
-  // Compute linear -> tanh as in
-  //  Y = tanh(Mx + B).
+  // Compute linear, Y = M X + B.
   const cv::Mat& M =
     W(cv::Range(0, ParamsLinearMat), cv::Range::all()).reshape(1, NumOutputs);
   const cv::Mat& B =
     W(cv::Range(ParamsLinearMat, NumParameters), cv::Range::all());
-
-  // Perform linear operation Y = Mx + B.
   //*Y = M * X + B;
   cv::gemm(M, X, 1.0, B, 1.0, *Y);
-  // Perform nonlinear operation (ideally, vectorized).
-  const cv::MatConstIterator_<NumericType> yEnd = Y->end<NumericType>();
-  for(cv::MatIterator_<NumericType> y = Y->begin<NumericType>(); y != yEnd; ++y)
-  {
-    *y = std::tanh(*y);
-  }
 }
 
 template <int NumInputs_, int NumOutputs_, typename NumericType_>
-void HiddenLinearTanh<NumInputs_, NumOutputs_, NumericType_>
+void Linear<NumInputs_, NumOutputs_, NumericType_>
 ::Backward(const cv::Mat& X, const cv::Mat& W, const cv::Mat& /*Y*/,
               const cv::Mat& dLdY, cv::Mat* dLdW, cv::Mat* dLdX)
 {
   const cv::Mat& M =
     W(cv::Range(0, ParamsLinearMat), cv::Range::all()).reshape(1, NumOutputs);
-  const cv::Mat& B =
-    W(cv::Range(ParamsLinearMat, NumParameters), cv::Range::all());
   cv::Mat dLdM =
     (*dLdW)(cv::Range(0, ParamsLinearMat), cv::Range::all()).reshape(1, NumOutputs);
   cv::Mat dLdB =
     (*dLdW)(cv::Range(ParamsLinearMat, NumParameters), cv::Range::all());
-  // Compute Mx + B.
-  //*Y = M * X + B;
-  cv::gemm(M, X, 1.0, B, 1.0, dLdB);
-  // Compute dLdB = sech^2(Mx + B).dLdY (ideally vectorized).
-  const cv::MatConstIterator_<NumericType> dLdBEnd = dLdB.end<NumericType>();
-  for(cv::MatIterator_<NumericType> v = dLdB.begin<NumericType>(); v != dLdBEnd; ++v)
+  // dLdX = M^T dLdY
+  cv::gemm(M, dLdY, 1.0, cv::Mat(), 0.0, *dLdX, CV_GEMM_A_T);
+  // dLdM = dLdY X^T
+  cv::gemm(dLdY, X, 1.0, cv::Mat(), 0.0, dLdM, CV_GEMM_B_T);
+  // dLdB = dLdY
+  dLdY.copyTo(dLdB);
+}
+
+template <int NumInputs_, typename NumericType_>
+void Tanh<NumInputs_, NumericType_>
+::Forward(const cv::Mat& X, const cv::Mat& /*W*/, cv::Mat* Y)
+{
+  // Compute Tanh, Y = tanh(X)
+  // Perform nonlinear operation (ideally, vectorized).
+  cv::MatConstIterator_<NumericType> x = X.begin<NumericType>();
+  cv::MatIterator_<NumericType> y = Y->begin<NumericType>();
+  const cv::MatConstIterator_<NumericType> yEnd = Y->end<NumericType>();
+  for(; y != yEnd; ++x, ++y)
   {
-    *v = 1.0 / std::cosh(*v);
-    *v *= *v;
+    *y = std::tanh(*x);
   }
-  dLdB.mul(dLdY);
-  // Compute dLdX = M^T sech^2(Mx + B).dLdY = M^T dLdB
-  //*dLdX = M.t() * dLdB;
-  cv::gemm(M, dLdB, 1.0, cv::Mat(), 0.0, *dLdX, CV_GEMM_A_T);
-  // Compute dLdM = sech^2(Mx + B).dLdY X^T = dLdB x^T
-  //dLdM = dLdB * X.t();
-  cv::gemm(dLdB, X, 1.0, cv::Mat(), 0.0, dLdM, CV_GEMM_B_T);
+}
+
+template <int NumInputs_, typename NumericType_>
+void Tanh<NumInputs_, NumericType_>
+::Backward(const cv::Mat& X, const cv::Mat& /*W*/, const cv::Mat& /*Y*/,
+              const cv::Mat& dLdY, cv::Mat* /*dLdW*/, cv::Mat* dLdX)
+{
+  // Compute dLdx = sech^2(x).dLdY (ideally vectorized).
+  cv::MatConstIterator_<NumericType> x = X.begin<NumericType>();
+  cv::MatConstIterator_<NumericType> dy = dLdY.begin<NumericType>();
+  cv::MatIterator_<NumericType> dx = dLdX->begin<NumericType>();
+  const cv::MatConstIterator_<NumericType> dxEnd = dLdX->end<NumericType>();
+  for(; dx != dxEnd; ++x, ++dy, ++dx)
+  {
+    *dx = 1.0 / std::cosh(*x);
+    *dx *= *dx * *dy;
+  }
 }
 
 template <int NumInputs_, int NumClasses_, typename NumericType_>
@@ -220,7 +244,7 @@ void SoftMax<NumInputs_, NumClasses_, NumericType_>
 ::Forward(const cv::Mat& X, const cv::Mat& W, cv::Mat* Y)
 {
   // Compute linear -> exp as in
-  //  Y = exp(Mx + B).
+  //  Y = exp-(Mx + B).
   const cv::Mat& M =
     W(cv::Range(0, ParamsLinearMat), cv::Range::all()).reshape(1, NumOutputs - 1);
   const cv::Mat& B =
@@ -229,8 +253,7 @@ void SoftMax<NumInputs_, NumClasses_, NumericType_>
   // Perform linear operation. Last set of weights is implictly 0.
   //Yk_1 = M * X + B;
   cv::gemm(M, X, 1.0, B, 1.0, Yk_1);
-  //Y->rowRange(0, NumOutputs - 1) = M * X + B;
-  Y->at<NumericType>(NumOutputs - 1, 0) = 1;
+  Y->at<NumericType>(NumOutputs - 1, 0) = 0;
   // Perform nonlinear operation (ideally, vectorized).
   cv::exp(*Y, *Y);
   // Perform Gibbs normalization.
