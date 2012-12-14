@@ -83,7 +83,12 @@ public:
   typedef typename LayerType::NumericType NumericType;
 
   template <int N>
-  struct RandomizeMatHelper { static void Init(cv::Mat* m) { MatRandUniform<NumericType>(m); } };
+  struct RandomizeMatHelper {
+    static void Init(cv::Mat* m)
+    {
+      MatRandUniform<NumericType>(m);
+    }
+  };
   template <>
   struct RandomizeMatHelper<0> { static void Init(cv::Mat* /*m*/) { } };
 };
@@ -98,16 +103,16 @@ public:
 
   static void Run()
   {
+    cv::Mat W(LayerType::NumParameters, 1, CV_64F);
+    InitWHelper::Init(&W);
+    cv::Mat X(LayerType::NumInputs, 1, CV_64F);
+    MatRandUniform<NumericType>(&X);
+    X *= static_cast<NumericType>(10);
+    cv::Mat Y = cv::Mat(LayerType::NumOutputs, 1, CV_64F,
+                        cv::Scalar(std::numeric_limits<NumericType>::max()));
     {
       SCOPED_TRACE("Forward");
       LayerType hl;
-      cv::Mat W(LayerType::NumParameters, 1, CV_64F);
-      InitWHelper::Init(&W);
-      cv::Mat X(LayerType::NumInputs, 1, CV_64F);
-      MatRandUniform<NumericType>(&X);
-      X *= static_cast<NumericType>(10);
-      cv::Mat Y = cv::Mat(LayerType::NumOutputs, 1, CV_64F,
-                          cv::Scalar(std::numeric_limits<NumericType>::max()));
       const cv::Mat Y0 = Y.clone();
       hl.Forward(X, W, &Y);
       MatAssertNotNear<NumericType>(Y0, Y, 1.0e-6);
@@ -117,17 +122,13 @@ public:
       LayerType hl;
       cv::Mat dLdY(LayerType::NumOutputs, 1, CV_64F);
       MatRandUniform<NumericType>(&dLdY);
-      cv::Mat X(LayerType::NumInputs, 1, CV_64F);
-      MatRandUniform<NumericType>(&X);
-      cv::Mat W(LayerType::NumParameters, 1, CV_64F);
-      InitWHelper::Init(&W);
       cv::Mat dLdW = cv::Mat(LayerType::NumParameters, 1, CV_64F,
                              cv::Scalar(std::numeric_limits<NumericType>::max()));
       const cv::Mat dLdW0 = dLdW.clone();
       cv::Mat dLdX = cv::Mat(LayerType::NumInputs, 1, CV_64F,
                              cv::Scalar(std::numeric_limits<NumericType>::max()));
       const cv::Mat dLdX0 = dLdX.clone();
-      hl.Backward(dLdY, X, W, &dLdW, &dLdX);
+      hl.Backward(X, W, Y, dLdY, &dLdW, &dLdX);
       MatAssertNotNear<NumericType>(dLdW0, dLdW, 1.0e-6);
       MatAssertNotNear<NumericType>(dLdX0, dLdX, 1.0e-6);
     }
@@ -171,6 +172,7 @@ struct LayerForwardBackwardFiniteDifferenceTester
   static void TestDLdXBackward(const cv::Mat& X, const cv::Mat& W,
                                LayerType* layer, cv::Mat* ddX)
   {
+    cv::Mat Y = cv::Mat::ones(LayerType::NumOutputs, 1, CvType);
     cv::Mat dLdW = cv::Mat(W.size(), W.type());
     cv::Mat dLdX = cv::Mat(X.size(), X.type());
     cv::Mat dLdY = cv::Mat::zeros(LayerType::NumOutputs, 1, CvType);
@@ -178,7 +180,7 @@ struct LayerForwardBackwardFiniteDifferenceTester
     for (int i = 0; i < LayerType::NumOutputs; ++i)
     {
       dLdY.at<double>(i, 0) = 1;
-      layer->Backward(dLdY, X, W, &dLdW, &dLdX);
+      layer->Backward(X, W, Y, dLdY, &dLdW, &dLdX);
       dLdY.at<double>(i, 0) = 0;
       ddX->row(i) = dLdX.t();
     }
@@ -209,6 +211,7 @@ struct LayerForwardBackwardFiniteDifferenceTester
   static void TestDLdWBackward(const cv::Mat& X, const cv::Mat& W,
                                LayerType* layer, cv::Mat* ddX)
   {
+    cv::Mat Y = cv::Mat::ones(LayerType::NumOutputs, 1, CvType);
     cv::Mat dLdW = cv::Mat(W.size(), W.type());
     cv::Mat dLdX = cv::Mat(X.size(), X.type());
     cv::Mat dLdY = cv::Mat::zeros(LayerType::NumOutputs, 1, CvType);
@@ -216,7 +219,7 @@ struct LayerForwardBackwardFiniteDifferenceTester
     for (int i = 0; i < LayerType::NumOutputs; ++i)
     {
       dLdY.at<double>(i, 0) = 1;
-      layer->Backward(dLdY, X, W, &dLdW, &dLdX);
+      layer->Backward(X, W, Y, dLdY, &dLdW, &dLdX);
       dLdY.at<double>(i, 0) = 0;
       ddX->row(i) = dLdW.t();
     }
@@ -264,6 +267,12 @@ struct LayerForwardBackwardFiniteDifferenceTester
   }
 };
 
+TEST(Passthrough, ForwardBackward)
+{
+  typedef Passthrough<100, double> LayerType;
+  ForwardBackwardTest<LayerType>::Run();
+}
+
 TEST(HiddenLinearTanh, ForwardBackward)
 {
   typedef HiddenLinearTanh<100, 200, double> LayerType;
@@ -280,11 +289,13 @@ TEST(HiddenLinearTanh, LayerGradients)
   LayerForwardBackwardFiniteDifferenceTester<LayerType>::Run();
 }
 
-TEST(Passthrough, ForwardBackward)
+TEST(Softmax, ForwardBackward)
 {
-  typedef Passthrough<100, double> LayerType;
+  typedef SoftMax<20, 4, double> LayerType;
   ForwardBackwardTest<LayerType>::Run();
+  //LayerForwardBackwardFiniteDifferenceTester<LayerType>::Run();
 }
+
 
 }
 
