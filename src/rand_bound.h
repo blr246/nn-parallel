@@ -92,6 +92,27 @@ double RatioOfUniforms(const double mu, const double sig)
   return mu + (sig * (v / u));
 }
 
+struct RatioUniformGenerator
+{
+  RatioUniformGenerator(double mu_, double sig_);
+
+  double operator()() const;
+
+  double mu;
+  double sig;
+};
+
+inline
+RatioUniformGenerator::RatioUniformGenerator(double mu_, double sig_)
+    : mu(mu_), sig(sig_)
+  {}
+
+inline
+double RatioUniformGenerator::operator()() const
+{
+  return RatioOfUniforms(mu, sig);
+}
+
 } // end ns math
 using namespace math;
 } // end ns blr

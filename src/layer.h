@@ -7,6 +7,7 @@
 #include <iostream>
 #include <limits>
 #include <cmath>
+#include <assert.h>
 
 namespace blr
 {
@@ -160,6 +161,7 @@ inline
 void Passthrough<NumInputs_, NumericType_>
 ::Forward(const cv::Mat& X, const cv::Mat& /*W*/, cv::Mat* Y)
 {
+  assert(X.rows == Y->rows && X.cols == Y->cols && X.type() == Y->type());
   X.copyTo(*Y);
 }
 
@@ -169,6 +171,7 @@ void Passthrough<NumInputs_, NumericType_>
 ::Backward(const cv::Mat& /*X*/, const cv::Mat& /*W*/, const cv::Mat& /*Y*/,
            const cv::Mat& dLdY, cv::Mat* /*dLdW*/, cv::Mat* dLdX)
 {
+  assert(dLdY.rows == dLdX->rows && dLdY.cols == dLdX->cols && dLdY.type() == dLdX->type());
   dLdY.copyTo(*dLdX);
 }
 
@@ -182,6 +185,8 @@ void Linear<NumInputs_, NumOutputs_, NumericType_>
     W(cv::Range(0, ParamsLinearMat), cv::Range::all()).reshape(1, NumOutputs);
   const cv::Mat& B =
     W(cv::Range(ParamsLinearMat, NumParameters), cv::Range::all());
+  assert(X.rows == M.cols && Y->rows == M.rows && Y->rows == B.rows &&
+         X.type() == W.type() && W.type() == Y->type());
   //*Y = M * X + B;
   cv::gemm(M, X, 1.0, B, 1.0, *Y);
 }
@@ -198,6 +203,10 @@ void Linear<NumInputs_, NumOutputs_, NumericType_>
     (*dLdW)(cv::Range(0, ParamsLinearMat), cv::Range::all()).reshape(1, NumOutputs);
   cv::Mat dLdB =
     (*dLdW)(cv::Range(ParamsLinearMat, NumParameters), cv::Range::all());
+  assert(X.rows == M.cols && dLdY.rows == M.rows && dLdY.rows == dLdB.rows &&
+         dLdX->rows == X.rows && dLdW->rows == W.rows &&
+         X.type() == W.type() && W.type() == dLdY.type() &&
+         dLdY.type() == dLdW->type() && dLdW->type() == dLdX->type());
   // dLdX = M^T dLdY
   cv::gemm(M, dLdY, 1.0, cv::Mat(), 0.0, *dLdX, CV_GEMM_A_T);
   // dLdM = dLdY X^T
@@ -210,6 +219,7 @@ template <int NumInputs_, typename NumericType_>
 void Tanh<NumInputs_, NumericType_>
 ::Forward(const cv::Mat& X, const cv::Mat& /*W*/, cv::Mat* Y)
 {
+  assert(X.rows == Y->rows && X.type() == Y->type());
   // Compute Tanh, Y = tanh(X)
   // Perform nonlinear operation (ideally, vectorized).
   cv::MatConstIterator_<NumericType> x = X.begin<NumericType>();
@@ -226,6 +236,8 @@ void Tanh<NumInputs_, NumericType_>
 ::Backward(const cv::Mat& X, const cv::Mat& /*W*/, const cv::Mat& /*Y*/,
               const cv::Mat& dLdY, cv::Mat* /*dLdW*/, cv::Mat* dLdX)
 {
+  assert(X.rows == dLdY.rows && X.rows == dLdX->rows &&
+         X.type() == dLdY.type() && dLdY.type() == dLdX->type());
   // Compute dLdx = sech^2(x).dLdY (ideally vectorized).
   cv::MatConstIterator_<NumericType> x = X.begin<NumericType>();
   cv::MatConstIterator_<NumericType> dy = dLdY.begin<NumericType>();
@@ -233,7 +245,7 @@ void Tanh<NumInputs_, NumericType_>
   const cv::MatConstIterator_<NumericType> dxEnd = dLdX->end<NumericType>();
   for(; dx != dxEnd; ++x, ++dy, ++dx)
   {
-    *dx = 1.0 / std::cosh(*x);
+    *dx = static_cast<NumericType>(1.0 / std::cosh(*x));
     *dx *= *dx * *dy;
   }
 }
@@ -243,8 +255,10 @@ inline
 void SoftMax<NumClasses_, NumericType_>
 ::Forward(const cv::Mat& X, const cv::Mat& /*W*/, cv::Mat* Y)
 {
+  assert(X.rows == Y->rows && X.type() == Y->type());
   // Compute softmax as in Y = exp(-X) / \sum{exp(-X)}
-  *Y = -X;
+  X.copyTo(*Y);
+  *Y *= -1;
   cv::exp(*Y, *Y);
   // Perform Gibbs normalization.
   const NumericType normFactor =
@@ -257,6 +271,8 @@ void SoftMax<NumClasses_, NumericType_>
 ::Backward(const cv::Mat& /*X*/, const cv::Mat& /*W*/, const cv::Mat& Y,
            const cv::Mat& dLdY, cv::Mat* /*dLdW*/, cv::Mat* dLdX)
 {
+  assert(Y.rows == dLdY.rows && Y.rows == dLdX->rows &&
+         Y.type() == dLdY.type() && dLdY.type() == dLdX->type());
   // Compute index of output category.
   int classIdx = 0; 
   {

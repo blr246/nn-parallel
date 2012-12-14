@@ -10,8 +10,8 @@ using namespace blr;
 TEST(idx_cv, LoadFile)
 {
   cv::Mat X, Y;
-  ASSERT_TRUE(IdxToCvMat("data/t10k-images.idx3-ubyte", &X));
-  ASSERT_TRUE(IdxToCvMat("data/t10k-labels.idx1-ubyte", &Y));
+  ASSERT_TRUE(IdxToCvMat<float>("data/t10k-images.idx3-ubyte", &X));
+  ASSERT_TRUE(IdxToCvMat<unsigned char>("data/t10k-labels.idx1-ubyte", &Y));
 }
 
 }
