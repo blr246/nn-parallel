@@ -25,5 +25,9 @@ endif(WIN32)
 # Make sure that OpenCV_DIR is set in environment or find_package() will fail.
 find_package(OpenCV REQUIRED)
 
+if(WITH_GTEST)
+  enable_testing()
+endif(WITH_GTEST)
+
 add_subdirectory(thirdparty)
 add_subdirectory(src)

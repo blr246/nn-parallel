@@ -6,6 +6,7 @@
 #include <functional>
 #include <vector>
 #include <utility>
+#include <iostream>
 
 using namespace blr;
 
@@ -64,13 +65,14 @@ template <typename NNType>
 const cv::Mat* NLLCriterion::
 SampleLoss(const NNType& nn, const cv::Mat& xi, const cv::Mat& yi, double* loss, int* error)
 {
+  typedef typename NNType::NumericType NumericType;
   const cv::Mat* yOut = nn.Forward(xi);
   // Find max class label.
   int label = 0;
-  double maxP = yOut->at<NNType::NumericType>(0, 0);
+  double maxP = yOut->at<NumericType>(0, 0);
   const int yOutSize = yOut->rows;
   for (int i = 1; i < yOutSize; ++i) {
-    const double p = yOut->at<NNType::NumericType>(i, 0);
+    const double p = yOut->at<NumericType>(i, 0);
     if (p > maxP)
     {
       maxP = p;
@@ -79,7 +81,7 @@ SampleLoss(const NNType& nn, const cv::Mat& xi, const cv::Mat& yi, double* loss,
   }
   const int trueLabel = yi.at<unsigned char>(0, 0);
   *error = (trueLabel != label);
-  *loss = -std::log(yOut->at<NNType::NumericType>(trueLabel, 0));
+  *loss = -std::log(yOut->at<NumericType>(trueLabel, 0));
   return yOut;
 }
 
@@ -87,6 +89,7 @@ template <typename NNType>
 void NLLCriterion::
 DatasetLoss(const NNType& nn, const cv::Mat& X, const cv::Mat& Y, double* loss, int* errors)
 {
+  typedef typename NNType::NumericType NumericType;
   *errors = 0;
   *loss = 0;
   double sampleLoss;
@@ -106,13 +109,13 @@ const cv::Mat* NLLCriterion::
 SampleGradient(NNType* nn, const cv::Mat& xi, const cv::Mat& yi,
                cv::Mat* dLdY, double* loss, int* error)
 {
-  typedef NNType::NumericType NumericType;
+  typedef typename NNType::NumericType NumericType;
   // Forward pass.
   const cv::Mat* yOut = SampleLoss(*nn, xi, yi, loss, error);
   // Compute loss gradient to get this party started.
   const int trueLabel = yi.at<unsigned char>(0, 0);
   const NumericType nllGrad = -static_cast<NumericType>(1.0 / yOut->at<NumericType>(trueLabel, 0));
-  *dLdY = 0;
+  *dLdY = cv::Scalar(0);
   dLdY->at<NumericType>(trueLabel, 0) = nllGrad;
   // Backward pass.
   return nn->Backward(*dLdY);
@@ -344,17 +347,66 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_, NumericType_>
 
 enum
 {
-  ERROR_BAD_TRAIN_DATA   = 1,
-  ERROR_BAD_TRAIN_LABELS = 1 << 1,
+  ERROR_NONE           = 0,
+  ERROR_BAD_ARGUMENTS  = 1 << 0,
+  ERROR_BAD_TRAIN_DATA = 1 << 1,
+  ERROR_BAD_TEST_DATA  = 1 << 2,
+  ERROR_BAD_DATA_DIMS  = 1 << 3,
 };
 
-int main(int /*argc*/, char** /*argv*/)
+struct Args
+{
+  typedef std::pair<std::string, std::string> PathPair;
+  enum {
+    Argv_DataTrainPoints,
+    Argv_DataTrainLabels,
+    Argv_DataTestPoints,
+    Argv_DataTestLabels,
+    Argv_Count,
+  };
+
+  Args() : asList(Argv_Count) {}
+
+  static void Usage(const char* argv0, std::ostream& stream)
+  {
+    const std::string strArgv0(argv0);
+    const size_t lastPathSep = strArgv0.find_last_of("\\/");
+    const size_t appNameBegin = (lastPathSep != std::string::npos) ? lastPathSep + 1: 0;
+    const std::string strAppName = strArgv0.substr(appNameBegin);
+    stream << "Usage: " << strAppName
+           << " PATH_TRAIN_DATA PATH_TRAIN_LABELS PATH_TEST_DATA PATH_TEST_LABELS" << std::endl;
+  }
+
+  std::vector<std::string> asList;
+};
+
+int main(int argc, char** argv)
 {
 #if defined(NDEBUG)
   enum { MaxRows = 5000, };
 #else
   enum { MaxRows = 4000, };
 #endif
+
+  // Parse args.
+  Args args;
+  {
+    if (argc != (Args::Argv_Count + 1))
+    {
+      std::cerr << "Error: invalid arguments\n" << std::endl;
+      Args::Usage(*argv, std::cerr);
+      return ERROR_BAD_ARGUMENTS;
+    }
+    for (int i = 0; i < Args::Argv_Count; ++i)
+    {
+      args.asList[i] = argv[i + 1];
+    }
+  }
+  typedef std::pair<std::string, std::string> PathPair;
+  const PathPair dataTrainPaths = std::make_pair(args.asList[Args::Argv_DataTrainPoints],
+                                                 args.asList[Args::Argv_DataTrainLabels]);
+  const PathPair dataTestPaths = std::make_pair(args.asList[Args::Argv_DataTestPoints],
+                                                args.asList[Args::Argv_DataTestLabels]);
 
   typedef float NumericType;
   typedef DualLayerNNSoftmax<784, 10, 800, NumericType> NNType;
@@ -365,23 +417,37 @@ int main(int /*argc*/, char** /*argv*/)
   std::cout << "CvType = " << CvType << std::endl;
   //         Load data.
   std::cout << "Loading data..." << std::endl;
-  cv::Mat X, Y;
-  int errorCode = 0;
-  if (!IdxToCvMat("data/train-images.idx3-ubyte", CvType, MaxRows, &X))
+  typedef std::pair<cv::Mat, cv::Mat> Dataset;
+  Dataset dataTrain;
+  Dataset dataTest;
+  int errorCode = ERROR_NONE;
+  if (!IdxToCvMat(dataTrainPaths.first, CvType, MaxRows, &dataTrain.first) ||
+      !IdxToCvMat(dataTrainPaths.second, CV_8U, MaxRows, &dataTrain.second) ||
+      (dataTrain.first.rows != dataTrain.second.rows))
   {
+    std::cerr << "Error loading training data" << std::endl;
     errorCode |= ERROR_BAD_TRAIN_DATA;
   }
-  std::cout << "Loaded " << X.rows << " training points." << std::endl;
-  if (!IdxToCvMat("data/train-labels.idx1-ubyte", CV_8U, MaxRows, &Y))
+  std::cout << "Loaded " << dataTrain.first.rows << " training data points." << std::endl;
+  if (!IdxToCvMat(dataTestPaths.first, CvType, MaxRows, &dataTest.first) ||
+      !IdxToCvMat(dataTestPaths.second, CV_8U, MaxRows, &dataTest.second) ||
+      (dataTest.first.rows != dataTest.second.rows))
   {
-    errorCode |= ERROR_BAD_TRAIN_LABELS;
+    std::cerr << "Error loading testing data" << std::endl;
+    errorCode |= ERROR_BAD_TEST_DATA;
   }
-  std::cout << "Loaded " << X.rows << " training labels." << std::endl;
+  assert(dataTrain.first.type() == dataTest.first.type());
+  if (dataTrain.first.cols != dataTest.first.cols)
+  {
+    std::cerr << "Error: train/test input dims unmatched" << std::endl;
+    errorCode |= ERROR_BAD_DATA_DIMS;
+  }
+  std::cout << "Loaded " << dataTest.first.rows << " testing data." << std::endl;
   if (errorCode)
   {
     return errorCode;
   }
-  assert(NNType::NumInputs == X.cols);
+  assert(NNType::NumInputs == dataTrain.first.cols);
   // Instantiate network and train.
   NNType nn0;
   // Initial loss and errors.
@@ -389,7 +455,8 @@ int main(int /*argc*/, char** /*argv*/)
   std::vector<LossErrorPair> lossErrors;
   LossErrorPair lossErrorPair;
   std::cout << "Computing initial loss.." << std::endl;
-  NLLCriterion::DatasetLoss(nn0, X, Y, &lossErrorPair.first, &lossErrorPair.second);
+  NLLCriterion::DatasetLoss(nn0, dataTrain.first, dataTrain.second,
+                            &lossErrorPair.first, &lossErrorPair.second);
   lossErrors.push_back(lossErrorPair);
   // Backprop.
   double sampleLoss;
@@ -397,20 +464,22 @@ int main(int /*argc*/, char** /*argv*/)
   cv::Mat dLdY(NNType::NumClasses, 1, CvType);
   const NumericType eta = static_cast<NumericType>(0.001);
   enum { DebugPrintEveryNSamples = 500, };
-  for (int i = 0; i < X.rows; ++i)
+  const int dataTestSize = dataTest.first.rows;
+  for (int i = 0; i < dataTestSize; ++i)
   {
-    const cv::Mat xi = X.row(i).t();
-    const cv::Mat yi = Y.row(i);
+    const cv::Mat xi = dataTest.first.row(i).t();
+    const cv::Mat yi = dataTest.second.row(i);
     const cv::Mat* dLdW = NLLCriterion::SampleGradient(&nn0, xi, yi,
                                                        &dLdY, &sampleLoss, &sampleError);
     //nn0.W += -eta * *dLdW;
     cv::scaleAdd(*dLdW, -eta, nn0.W, nn0.W);
     if (0 == (i % DebugPrintEveryNSamples))
     {
-      std::cout << "Processed sample " << i << " of " << X.rows << std::endl;
+      std::cout << "Processed sample " << i << " of " << dataTestSize << std::endl;
     }
   }
-  NLLCriterion::DatasetLoss(nn0, X, Y, &lossErrorPair.first, &lossErrorPair.second);
+  NLLCriterion::DatasetLoss(nn0, dataTrain.first, dataTrain.second,
+                            &lossErrorPair.first, &lossErrorPair.second);
   lossErrors.push_back(lossErrorPair);
   // Printout all lossies.
   std::cout << "ROUND : (TRAINING LOSS, TRAINING ERRORS)\n";

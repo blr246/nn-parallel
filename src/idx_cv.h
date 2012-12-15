@@ -1,5 +1,6 @@
 #ifndef SRC_IDX_CV_H
 #define SRC_IDX_CV_H
+#include "type_utils.h"
 #include "opencv/cv.h"
 #include "opencv/cv.hpp"
 #include "opencv/cxmat.hpp"
@@ -9,14 +10,6 @@ namespace blr
 {
 namespace nn
 {
-
-template <typename T> struct NumericTypeToCvType;
-template <> struct NumericTypeToCvType<double> { enum { CvType = CV_64F, }; };
-template <> struct NumericTypeToCvType<float> { enum { CvType = CV_32F, }; };
-template <> struct NumericTypeToCvType<char> { enum { CvType = CV_8S, }; };
-template <> struct NumericTypeToCvType<unsigned char> { enum { CvType = CV_8U, }; };
-template <> struct NumericTypeToCvType<short> { enum { CvType = CV_16S, }; };
-template <> struct NumericTypeToCvType<unsigned short> { enum { CvType = CV_16U, }; };
 
 // <summary> Read matrix of points from an idx file.</summary>
 template <typename NumericType>

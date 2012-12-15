@@ -48,7 +48,7 @@ if(WITH_GTEST)
   include_directories(${GTEST_INCLUDE_DIRS})
   add_executable(nn_parallel_gtest ${SRCS} ${HEADERS})
   target_link_libraries(nn_parallel_gtest nn_parallel_core ${OpenCV_LIBS} gtest)
-  add_test(nn_parallel_gtest nn_parallel_gtest)
+  add_test(nn_parallel_gtest ${CMAKE_CURRENT_BINARY_DIR}/nn_parallel_gtest)
   if(WIN32)
     # Set max warning level, disable c99 initialization warning,
     # disable unsafe use of bool for STATIC_ASSERT.

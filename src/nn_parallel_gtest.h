@@ -86,23 +86,18 @@ inline void MatRandUniform(cv::Mat* m)
   std::generate(m->begin<T>(), m->end<T>(), &RandUniform<T>);
 }
 
-template <typename LayerType_>
-struct TestUtils
+namespace detail
 {
-public:
-  typedef LayerType_ LayerType;
-  typedef typename LayerType::NumericType NumericType;
-
-  template <int N>
-  struct RandomizeMatHelper {
-    static void Init(cv::Mat* m)
-    {
-      MatRandUniform<NumericType>(m);
-    }
-  };
-  template <>
-  struct RandomizeMatHelper<0> { static void Init(cv::Mat* /*m*/) { } };
+template <int N, typename LayerType>
+struct RandomizeMatHelper {
+  static void Init(cv::Mat* m)
+  {
+    MatRandUniform<typename LayerType::NumericType>(m);
+  }
 };
+template <typename LayerType>
+struct RandomizeMatHelper<0, LayerType> { static void Init(cv::Mat* /*m*/) { } };
+}
 
 template <typename LayerType_>
 struct ForwardBackwardTest
@@ -110,7 +105,7 @@ struct ForwardBackwardTest
 public:
   typedef LayerType_ LayerType;
   typedef typename LayerType::NumericType NumericType;
-  typedef typename TestUtils<LayerType>::RandomizeMatHelper<LayerType::NumParameters> InitWHelper;
+  typedef typename detail::RandomizeMatHelper<LayerType::NumParameters, LayerType> InitWHelper;
 
   static void Run()
   {
@@ -149,14 +144,10 @@ public:
 template <typename LayerType_, int TolExp = -6, int XScale = 10>
 struct LayerForwardBackwardFiniteDifferenceTester
 {
-  template <typename T> struct NumericTypeToCvType;
-  template <> struct NumericTypeToCvType<double> { enum { CvType = CV_64F, }; };
-  template <> struct NumericTypeToCvType<float> { enum { CvType = CV_32F, }; };
-
   typedef LayerType_ LayerType;
   typedef typename LayerType::NumericType NumericType;
   enum { CvType = NumericTypeToCvType<NumericType>::CvType, };
-  typedef typename TestUtils<LayerType>::RandomizeMatHelper<LayerType::NumParameters> InitWHelper;
+  typedef typename detail::RandomizeMatHelper<LayerType::NumParameters, LayerType> InitWHelper;
 
   // Test dLdX.
   static void TestDLdXForward(const cv::Mat& X, const cv::Mat& W, cv::Mat* ddX)
@@ -332,9 +323,9 @@ struct HiddenLinearTanh
   typedef NumericType_ NumericType;
   enum { NumInputs = NumInputs_, };
   enum { NumOutputs = NumOutputs_, };
-  typedef Linear<NumInputs, NumOutputs, NumericType> Linear;
-  typedef Tanh<NumOutputs, NumericType> Tanh;
-  enum { NumParameters = Linear::NumParameters + Tanh::NumParameters, };
+  typedef Linear<NumInputs, NumOutputs, NumericType> MyLinear;
+  typedef Tanh<NumOutputs, NumericType> MyTanh;
+  enum { NumParameters = MyLinear::NumParameters + MyTanh::NumParameters, };
 
   static void Forward(const cv::Mat& X, const cv::Mat& W, cv::Mat* Y);
 
@@ -348,8 +339,8 @@ void HiddenLinearTanh<NumInputs_, NumOutputs_, NumericType_>
 ::Forward(const cv::Mat& X, const cv::Mat& W, cv::Mat* Y)
 {
   cv::Mat Y0(Y->size(), Y->type());
-  Linear::Forward(X, W, &Y0);
-  Tanh::Forward(Y0, cv::Mat(), Y);
+  MyLinear::Forward(X, W, &Y0);
+  MyTanh::Forward(Y0, cv::Mat(), Y);
 }
 
 template <int NumInputs_, int NumOutputs_, typename NumericType_>
@@ -359,10 +350,10 @@ void HiddenLinearTanh<NumInputs_, NumOutputs_, NumericType_>
            const cv::Mat& dLdY, cv::Mat* dLdW, cv::Mat* dLdX)
 {
   cv::Mat XTanh(Y.size(), Y.type());
-  Linear::Forward(X, W, &XTanh);
+  MyLinear::Forward(X, W, &XTanh);
   cv::Mat dLdX0(dLdY.size(), dLdY.type());
-  Tanh::Backward(XTanh, cv::Mat(), Y, dLdY, NULL, &dLdX0);
-  Linear::Backward(X, W, XTanh, dLdX0, dLdW, dLdX);
+  MyTanh::Backward(XTanh, cv::Mat(), Y, dLdY, NULL, &dLdX0);
+  MyLinear::Backward(X, W, XTanh, dLdX0, dLdW, dLdX);
 }
 
 TEST(HiddenLinearTanh, All)

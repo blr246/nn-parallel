@@ -28,11 +28,12 @@ public:
   StandardLayer();
 };
 
-template <typename LayerType_>
+template <typename LayerType_, int DropoutProbability_>
 class DropoutLayer
 {
 public:
   typedef LayerType_ LayerType;
+  enum { DropoutProbability = DropoutProbability_, };
 
   DropoutLayer();
 
@@ -126,8 +127,8 @@ StandardLayer<LayerType_>::StandardLayer()
   STATIC_ASSERT(LayerType::NumParameters >= 0, "NumParameters >= 0");
 }
 
-template <typename LayerType_>
-DropoutLayer<LayerType_>::DropoutLayer()
+template <typename LayerType_, int DropoutProbability_>
+DropoutLayer<LayerType_, DropoutProbability_>::DropoutLayer()
 : dropoutEnabled(false),
   dropoutProbability(DropoutProbability / 100.0)
 {
@@ -135,23 +136,23 @@ DropoutLayer<LayerType_>::DropoutLayer()
                 "0 <= DropoutProbability <= 100");
 }
 
-template <typename LayerType_>
+template <typename LayerType_, int DropoutProbability_>
 inline
-bool DropoutLayer<LayerType_>::DropoutEnabled() const
+bool DropoutLayer<LayerType_, DropoutProbability_>::DropoutEnabled() const
 {
   return dropoutEnabled;
 }
 
-template <typename LayerType_>
+template <typename LayerType_, int DropoutProbability_>
 inline
-void DropoutLayer<LayerType_>::EnableDropout()
+void DropoutLayer<LayerType_, DropoutProbability_>::EnableDropout()
 {
   dropoutEnabled = true;
 }
 
-template <typename LayerType_>
+template <typename LayerType_, int DropoutProbability_>
 inline
-void DropoutLayer<LayerType_>::DisableDropout()
+void DropoutLayer<LayerType_, DropoutProbability_>::DisableDropout()
 {
   dropoutEnabled = false;
 }
