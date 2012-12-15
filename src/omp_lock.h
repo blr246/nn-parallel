@@ -54,7 +54,7 @@ OmpLock
 {
   if (tryAcquire)
   {
-    acquired = omp_test_lock(&lock->lock);
+    acquired = omp_test_lock(&lock->lock) ? true : false;
   }
   else
   {
