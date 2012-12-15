@@ -17,6 +17,7 @@ public:
     ~ScopedLock();
 
     void Unlock() const;
+    void Lock() const;
     bool Acquired() const;
 
   private:
@@ -76,6 +77,14 @@ void OmpLock
     omp_unset_lock(&lock->lock);
   }
   acquired = false;
+}
+
+void OmpLock
+::ScopedLock::Lock() const
+{
+  assert(!acquired);
+  omp_set_lock(&lock->lock);
+  acquired = true;
 }
 
 bool OmpLock

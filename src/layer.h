@@ -206,9 +206,9 @@ void Linear<NumInputs_, NumOutputs_, NumericType_>
     {
       const NumericType scaleFactor = static_cast<NumericType>(scaleNumerator / std::sqrt(normSq));
       r *= scaleFactor;
-      std::cout << "normSq = " << normSq << ", "
-                   "updated normSq = " << r.dot(r) << ", "
-                   "l = " << maxNormSq << std::endl;
+//      std::cout << "normSq = " << normSq << ", "
+//                   "updated normSq = " << r.dot(r) << ", "
+//                   "l = " << maxNormSq << std::endl;
     }
     assert(((maxNormSq + 1e-6) - r.dot(r)) > 0);
   }
@@ -217,9 +217,9 @@ void Linear<NumInputs_, NumOutputs_, NumericType_>
   {
     const NumericType scaleFactor = static_cast<NumericType>(scaleNumerator / std::sqrt(normBSq));
     B *= scaleFactor;
-    std::cout << "normBSq = " << normBSq << ", "
-                 "updated normSq = " << B.dot(B) << ", "
-                 "l = " << maxNormSq << std::endl;
+//    std::cout << "normBSq = " << normBSq << ", "
+//                 "updated normSq = " << B.dot(B) << ", "
+//                 "l = " << maxNormSq << std::endl;
   }
   assert(((maxNormSq + 1e-6) - B.dot(B)) > 0);
 }
