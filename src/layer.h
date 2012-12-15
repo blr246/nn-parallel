@@ -1,5 +1,6 @@
 #ifndef SRC_LAYER_H
 #define SRC_LAYER_H
+#include "type_utils.h"
 #include "static_assert.h"
 #include "opencv/cv.h"
 #include "opencv/cv.hpp"
@@ -115,6 +116,21 @@ public:
 
   static void Backward(const cv::Mat& X, const cv::Mat& W, const cv::Mat& Y,
                        const cv::Mat& dLdY, cv::Mat* dLdW, cv::Mat* dLdX);
+};
+
+struct NLLCriterion
+{
+  template <typename NNType>
+  static const cv::Mat* SampleLoss(const NNType& nn, const cv::Mat& xi, const cv::Mat& yi,
+                                   double* loss, int* error);
+
+  template <typename NNType>
+  static void DatasetLoss(const NNType& nn, const cv::Mat& X, const cv::Mat& Y,
+                          double* loss, int* errors);
+
+  template <typename NNType>
+  static const cv::Mat* SampleGradient(NNType* nn, const cv::Mat& xi, const cv::Mat& yi,
+                                       cv::Mat* dLdY, double* loss, int* error);
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -292,6 +308,66 @@ void SoftMax<NumClasses_, NumericType_>
   }
   cv::multiply(dLdY, Y, *dLdX, -1.0);
   cv::scaleAdd(Y, Y.dot(dLdY), *dLdX, *dLdX);
+}
+
+template <typename NNType>
+const cv::Mat* NLLCriterion::
+SampleLoss(const NNType& nn, const cv::Mat& xi, const cv::Mat& yi, double* loss, int* error)
+{
+  typedef typename NNType::NumericType NumericType;
+  const cv::Mat* yOut = nn.Forward(xi);
+  // Find max class label.
+  int label = 0;
+  double maxP = yOut->at<NumericType>(0, 0);
+  const int yOutSize = yOut->rows;
+  for (int i = 1; i < yOutSize; ++i) {
+    const double p = yOut->at<NumericType>(i, 0);
+    if (p > maxP)
+    {
+      maxP = p;
+      label = i;
+    }
+  }
+  const int trueLabel = yi.at<unsigned char>(0, 0);
+  *error = (trueLabel != label);
+  *loss = -std::log(yOut->at<NumericType>(trueLabel, 0));
+  return yOut;
+}
+
+template <typename NNType>
+void NLLCriterion::
+DatasetLoss(const NNType& nn, const cv::Mat& X, const cv::Mat& Y, double* loss, int* errors)
+{
+  typedef typename NNType::NumericType NumericType;
+  *errors = 0;
+  *loss = 0;
+  double sampleLoss;
+  int sampleError;
+  for (int i = 0; i < X.rows; ++i)
+  {
+    const cv::Mat xi = X.row(i).t();
+    const cv::Mat yi = Y.row(i);
+    SampleLoss(nn, xi, yi, &sampleLoss, &sampleError);
+    *loss += sampleLoss;
+    *errors += sampleError;
+  }
+}
+
+template <typename NNType>
+const cv::Mat* NLLCriterion::
+SampleGradient(NNType* nn, const cv::Mat& xi, const cv::Mat& yi,
+               cv::Mat* dLdY, double* loss, int* error)
+{
+  typedef typename NNType::NumericType NumericType;
+  // Forward pass.
+  const cv::Mat* yOut = SampleLoss(*nn, xi, yi, loss, error);
+  // Compute loss gradient to get this party started.
+  const int trueLabel = yi.at<unsigned char>(0, 0);
+  const NumericType nllGrad = -static_cast<NumericType>(1.0 / yOut->at<NumericType>(trueLabel, 0));
+  *dLdY = cv::Scalar(0);
+  dLdY->at<NumericType>(trueLabel, 0) = nllGrad;
+  // Backward pass.
+  return nn->Backward(*dLdY);
 }
 
 } // end ns nn
