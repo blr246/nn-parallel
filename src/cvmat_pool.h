@@ -26,7 +26,7 @@ public:
     {
       Release();
     }
-    std::vector<CvMatPtr>* GetItems() const
+    std::vector<cv::Mat*>* GetItems() const
     {
       return &pool->myLittleMats;
     }
@@ -52,11 +52,17 @@ public:
   ~CvMatPool()
   {
     omp_destroy_lock(&lock);
+    // These better be released.
+    const size_t numMats = myLittleMats.size();
+    for (size_t i = 0; i < numMats; ++i)
+    {
+      delete myLittleMats[i];
+    }
   }
 
 private:
   omp_lock_t lock;
-  std::vector<CvMatPtr> myLittleMats;
+  std::vector<cv::Mat*> myLittleMats;
 };
 
 CvMatPool* GetCvMatPool()
@@ -68,7 +74,7 @@ CvMatPool* GetCvMatPool()
 CvMatPtr CreateCvMatPtr()
 {
   CvMatPool::Lock lock(GetCvMatPool());
-  std::vector<CvMatPtr>* items = lock.GetItems();
+  std::vector<cv::Mat*>* items = lock.GetItems();
   if (!items->empty())
   {
     CvMatPtr mat = items->back();
@@ -85,7 +91,7 @@ CvMatPtr CreateCvMatPtr()
 void DestroyCvMat(cv::Mat* obj)
 {
   CvMatPool::Lock lock(GetCvMatPool());
-  std::vector<CvMatPtr>* items = lock.GetItems();
+  std::vector<cv::Mat*>* items = lock.GetItems();
   items->push_back(obj);
 }
 

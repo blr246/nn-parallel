@@ -86,7 +86,7 @@ DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_, NumericType_>
 ::DualLayerNNSoftmax()
 : Y(NumInternalOutputs, 1, CvType),
   WPtr(),
-  dLdW(),
+  dLdW(NumParameters, 1, CvType),
   dLdX(NumInternalInputs, 1, CvType),
   yPartitions(),
   wPartitions(),
@@ -268,7 +268,7 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_, NumericType_>
   partitionIter.Next<Layer3a>(wPartitions + 5, yPartitions + 5, dwPartitions + 5, dxPartitions + 5);
   partitionIter.Next<Layer3b>(wPartitions + 6, yPartitions + 6, dwPartitions + 6, dxPartitions + 6);
   assert(Y.rows == partitionIter.yIdx);
-  assert(W.rows == partitionIter.wIdx);
+  assert(WPtr->rows == partitionIter.wIdx);
   assert(dLdW.rows == partitionIter.dwIdx);
   assert(dLdX.rows == partitionIter.dxIdx);
 }

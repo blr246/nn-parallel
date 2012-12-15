@@ -64,7 +64,10 @@ void MiniBatchTrainer<NNType_, WeightUpdateType_, LearningRateDecay_>
   int sampleIdx = 0;
   for (int batchIdx = 0; batchIdx < numBatches; ++batchIdx)
   {
+    cv::Mat* W;
+    nn->GetW(&W);
     CvMatPtr dwAccum = CreateCvMatPtr();
+    dwAccum->create(W->size(), CvType);
     const NumericType eta = static_cast<NumericType>(0.1 / batchSize);
     for (int batchIdxJ = 0; batchIdxJ < batchSize; ++batchIdxJ, ++sampleIdx, ++totalSamples)
     {
@@ -80,8 +83,6 @@ void MiniBatchTrainer<NNType_, WeightUpdateType_, LearningRateDecay_>
       }
     }
     // Apply gradient update once.
-    cv::Mat* W;
-    nn->GetW(&W);
     (*W) += *dwAccum;
   }
 }
@@ -126,7 +127,7 @@ int main(int argc, char** argv)
 #if defined(NDEBUG)
   enum { MaxRows = 5000, };
 #else
-  enum { MaxRows = 4000, };
+  enum { MaxRows = 500, };
 #endif
 
   // Parse args.
@@ -176,13 +177,13 @@ int main(int argc, char** argv)
     std::cerr << "Error loading testing data" << std::endl;
     errorCode |= ERROR_BAD_TEST_DATA;
   }
+  std::cout << "Loaded " << dataTest.first.rows << " testing data points." << std::endl;
   assert(dataTrain.first.type() == dataTest.first.type());
   if (dataTrain.first.cols != dataTest.first.cols)
   {
     std::cerr << "Error: train/test input dims unmatched" << std::endl;
     errorCode |= ERROR_BAD_DATA_DIMS;
   }
-  std::cout << "Loaded " << dataTest.first.rows << " testing data." << std::endl;
   if (errorCode)
   {
     return errorCode;
@@ -199,7 +200,7 @@ int main(int argc, char** argv)
                             &lossErrorPair.first, &lossErrorPair.second);
   lossErrors.push_back(lossErrorPair);
   // Backprop.
-  enum { NumBatches = 1000, };
+  enum { NumBatches = 10, };
   enum { BatchSize = 128, };
   typedef MiniBatchTrainer<NNType, int, int> MiniBatchTrainerType;
   MiniBatchTrainerType miniMatchTrainer(&nn0, 0, 0, dataTrain, NumBatches, BatchSize);
