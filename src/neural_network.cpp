@@ -40,7 +40,8 @@ template <typename NNType>
 void WeightExponentialDecay::Initialize()
 {
   deltaWPrev->create(
-      NNType::NumParameters, NumericTypeToCvType<typename NNType::NumericType>::CvType);
+      static_cast<int>(NNType::NumParameters), 1,
+      NumericTypeToCvType<typename NNType::NumericType>::CvType);
   (*deltaWPrev) = 0;
 }
 
@@ -108,15 +109,17 @@ void MiniBatchTrainer<NNType_, WeightUpdateType_, LearningRateDecay_>
   const int dataTrainSize = dataTrain.first.rows;
   int totalSamples = 0;
   int sampleIdx = 0;
-  //weightUpdater.Initialize<NNType>();
+  weightUpdater.Initialize<NNType>();
+  const NumericType avgScale = static_cast<NumericType>(1.0 / batchSize);
   for (int batchIdx = 0; batchIdx < numBatches; ++batchIdx)
   {
+    std::cout << "Starting batch " << batchIdx << std::endl;
     cv::Mat* W;
     nn->GetW(&W);
     // Get a gradient to accumulate into.
     CvMatPtr dwAccum = CreateCvMatPtr();
     dwAccum->create(W->size(), CvType);
-    const NumericType avgEtaScale = static_cast<NumericType>(0.001 / batchSize);
+    *dwAccum = 0;
     for (int batchIdxJ = 0; batchIdxJ < batchSize; ++batchIdxJ, ++sampleIdx, ++totalSamples)
     {
       sampleIdx %= dataTrainSize;
@@ -124,19 +127,25 @@ void MiniBatchTrainer<NNType_, WeightUpdateType_, LearningRateDecay_>
       const cv::Mat yi = dataTrain.second.row(sampleIdx);
       const cv::Mat* dLdW = NLLCriterion::SampleGradient(nn, xi, yi,
                                                          &dLdY, &sampleLoss, &sampleError);
-      cv::scaleAdd(*dLdW, -avgEtaScale, *dwAccum, *dwAccum);
+      const double checkUpdate = cv::norm(*dwAccum);
+//      if ((checkUpdate > 1e100) || (checkUpdate != checkUpdate) || (checkUpdate < 0))
+//      {
+//        bool what = true;
+//      }
+      cv::scaleAdd(*dLdW, avgScale, *dwAccum, *dwAccum);
       if (0 == (totalSamples % DebugPrintEveryNSamples))
       {
         std::cout << "Processed sample " << totalSamples << " of " << dataTrainSize << std::endl;
       }
     }
     // Apply gradient update once.
-    const cv::Mat* deltaW = weightUpdater.ComputeDeltaW(batchIdx + 1, *deltaW);
+    const cv::Mat* deltaW = weightUpdater.ComputeDeltaW(batchIdx + 1, *dwAccum);
     (*W) += *deltaW;
     // Get a new dropout state.
     nn->RefreshDropoutMask();
     // Truncate value from Hinton et. al. http://arxiv.org/abs/1207.0580.
     nn->TruncateL2(static_cast<NumericType>(15));
+    std::cout << "Completed batch " << batchIdx << std::endl;
   }
   // Return dropout state.
   if (!wasDropoutEnabled)

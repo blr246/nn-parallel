@@ -394,7 +394,7 @@ TEST(Softmax, IsNormalized)
   for (int testIdx = 0; testIdx < 10000; ++testIdx)
   {
     MatRandUniform<NumericType>(&X);
-    X *= static_cast<NumericType>(RandBound(100));
+    X *= static_cast<NumericType>(RandBound(10));
     cv::Mat Y = cv::Mat(LayerType::NumOutputs, 1, CV_64F,
                         cv::Scalar(std::numeric_limits<NumericType>::max()));
     LayerType hl;

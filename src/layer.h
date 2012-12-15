@@ -199,7 +199,7 @@ void Passthrough<NumInputs_, NumericType_>
 template <int NumInputs_, typename NumericType_>
 inline
 void Passthrough<NumInputs_, NumericType_>
-::TruncateL2(NumericType maxNorm, cv::Mat* W)
+::TruncateL2(NumericType /*maxNorm*/, cv::Mat* /*W*/)
 {}
 
 template <int NumInputs_, int NumOutputs_, typename NumericType_>
@@ -253,22 +253,22 @@ void Linear<NumInputs_, NumOutputs_, NumericType_>
     {
       const NumericType scaleFactor = static_cast<NumericType>(maxNorm / norm);
       r *= scaleFactor;
+      std::cout << "norm = " << norm << ", "
+                   "updated norm = " << cv::norm(r) << ", "
+                   "l = " << maxNorm << std::endl;
     }
     assert(((maxNorm + 1e-6) - cv::norm(r)) > 0);
-    std::cout << "norm = " << norm << ", "
-                 "updated norm = " << cv::norm(r) << ", "
-                 "l = " << maxNorm << std::endl;
   }
   const double normB = cv::norm(B);
   if (normB > maxNorm)
   {
     const NumericType scaleFactor = static_cast<NumericType>(maxNorm / normB);
     B *= scaleFactor;
-    assert(((maxNorm + 1e-6) - cv::norm(B)) > 0);
+    std::cout << "normB = " << normB << ", "
+                 "updated norm = " << cv::norm(B) << ", "
+                 "l = " << maxNorm << std::endl;
   }
-  std::cout << "normB = " << normB << ", "
-               "updated norm = " << cv::norm(B) << ", "
-               "l = " << maxNorm << std::endl;
+  assert(((maxNorm + 1e-6) - cv::norm(B)) > 0);
 }
 
 template <int NumInputs_, typename NumericType_>
@@ -301,7 +301,7 @@ void Tanh<NumInputs_, NumericType_>
   const cv::MatConstIterator_<NumericType> dxEnd = dLdX->end<NumericType>();
   for(; dx != dxEnd; ++x, ++dy, ++dx)
   {
-    *dx = static_cast<NumericType>(1.0 / std::max<NumericType>(std::cosh(*x), 1e-30));
+    *dx = static_cast<NumericType>(1.0 / std::max<double>(std::cosh(*x), 1e-16));
     *dx *= *dx * *dy;
   }
 }
@@ -309,7 +309,7 @@ void Tanh<NumInputs_, NumericType_>
 template <int NumInputs_, typename NumericType_>
 inline
 void Tanh<NumInputs_, NumericType_>
-::TruncateL2(NumericType maxNorm, cv::Mat* W)
+::TruncateL2(NumericType /*maxNorm*/, cv::Mat* /*W*/)
 {}
 
 template <int NumClasses_, typename NumericType_>
@@ -322,10 +322,45 @@ void SoftMax<NumClasses_, NumericType_>
   X.copyTo(*Y);
   *Y *= -1;
   cv::exp(*Y, *Y);
-  // Perform Gibbs normalization.
-  const NumericType normFactor =
-    static_cast<NumericType>(1.0 / std::max(cv::sum(*Y).val[0], 1e-30));
-  *Y *= normFactor;
+  // Perform Gibbs normalization. Sometimes this goes badly with infinities.
+  const double preNormSum = cv::sum(*Y).val[0];
+  if (preNormSum <= std::numeric_limits<double>::max())
+  {
+    const NumericType normFactor = static_cast<NumericType>(1.0 / std::max(preNormSum, 1e-16));
+    *Y *= normFactor;
+  }
+  else
+  {
+    // Make all infinities 1, all non-inities 0.
+    cv::MatIterator_<NumericType> y = Y->begin<NumericType>();
+    const cv::MatConstIterator_<NumericType> yEnd = Y->end<NumericType>();
+    int infCount = 0;
+    for(; y != yEnd; ++y)
+    {
+      if (*y > std::numeric_limits<NumericType>::max())
+      {
+        ++infCount;
+        *y = static_cast<NumericType>(1);
+      }
+      else
+      {
+        *y = 0;
+      }
+    }
+    if (infCount > 0)
+    {
+      *Y *= static_cast<NumericType>(1.0 / infCount);
+    }
+    else
+    {
+      *Y = static_cast<NumericType>(1.0 / Y->rows);
+    }
+  }
+//  const double dbgNorm = cv::sum(*Y).val[0];
+//  if (!(std::abs(1.0 - dbgNorm) < 1.0e-6))
+//  {
+//    bool why = true;
+//  }
 }
 
 template <int NumClasses_, typename NumericType_>
@@ -358,7 +393,7 @@ void SoftMax<NumClasses_, NumericType_>
 template <int NumClasses_, typename NumericType_>
 inline
 void SoftMax<NumClasses_, NumericType_>
-::TruncateL2(NumericType maxNorm, cv::Mat* W)
+::TruncateL2(NumericType /*maxNorm*/, cv::Mat* /*W*/)
 {}
 
 template <typename NNType>
@@ -415,7 +450,7 @@ SampleGradient(NNType* nn, const cv::Mat& xi, const cv::Mat& yi,
   // Compute loss gradient to get this party started.
   const int trueLabel = yi.at<unsigned char>(0, 0);
   const NumericType nllGrad =
-    -static_cast<NumericType>(1.0 / std::max<NumericType>(yOut->at<NumericType>(trueLabel, 0), 1e-30));
+    static_cast<NumericType>(-1.0 / std::max<double>(yOut->at<NumericType>(trueLabel, 0), 1e-16));
   *dLdY = cv::Scalar(0);
   dLdY->at<NumericType>(trueLabel, 0) = nllGrad;
   // Backward pass.

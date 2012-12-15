@@ -285,13 +285,11 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
                                    static_cast<int>(DropoutProbabilityInput);
     cv::Mat& dropout = dropoutPartitions[i];
     const size_t numEles = dropout.rows;
-//    std::cout << i << ": ";
     for (size_t j = 0; j < numEles; ++j)
     {
-      dropout.at<NumericType>(j, 0) = (RandBound(100) < dropoutProbability) ? 1 : 0;
-//      std::cout << dropout.at<NumericType>(j, 0);
+      dropout.at<NumericType>(j, 0) =
+        static_cast<NumericType>((RandBound(100) < dropoutProbability) ? 1 : 0);
     }
-//    std::cout << "\n" << std::endl;
   }
 }
 
