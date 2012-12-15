@@ -75,7 +75,7 @@ public:
 
   void TruncateL2(const NumericType maxNorm);
 
-  void SetW(CvMatPtr W);
+  void SetW(const CvMatPtr& W);
   void GetW(cv::Mat** W);
 
 private:
@@ -326,7 +326,7 @@ template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
 inline
 void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
                         DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
-::SetW(CvMatPtr W)
+::SetW(const CvMatPtr& W)
 {
   WPtr = W;
   assert(NULL != WPtr);
@@ -412,6 +412,46 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   assert(dLdW.rows == partitionIter.dwIdx);
   assert(dLdX.rows == partitionIter.dxIdx);
 }
+
+template <typename NNType>
+struct ScopedDropoutEnabler
+{
+  ScopedDropoutEnabler(NNType* nn_)
+    : nn(nn_),
+      wasEnabled(nn->DropoutEnabled())
+  {
+    nn->EnableDropout();
+  }
+  ~ScopedDropoutEnabler()
+  {
+    if (!wasEnabled)
+    {
+      nn->DisableDropout();
+    }
+  }
+  NNType* nn;
+  bool wasEnabled;
+};
+
+template <typename NNType>
+struct ScopedDropoutDisabler
+{
+  ScopedDropoutDisabler(NNType* nn_)
+    : nn(nn_),
+      wasEnabled(nn->DropoutEnabled())
+  {
+    nn->DisableDropout();
+  }
+  ~ScopedDropoutDisabler()
+  {
+    if (wasEnabled)
+    {
+      nn->EnableDropout();
+    }
+  }
+  NNType* nn;
+  bool wasEnabled;
+};
 
 } // end ns nn
 using namespace nn;

@@ -29,24 +29,6 @@ public:
   StandardLayer();
 };
 
-template <typename LayerType_, int DropoutProbability_>
-class DropoutLayer
-{
-public:
-  typedef LayerType_ LayerType;
-  enum { DropoutProbability = DropoutProbability_, };
-
-  DropoutLayer();
-
-  bool DropoutEnabled() const;
-  void EnableDropout();
-  void DisableDropout();
-
-private:
-  bool dropoutEnabled;
-  double dropoutProbability;
-};
-
 template <int NumInputs_, typename NumericType_ = double>
 class Passthrough
   : public StandardLayer<Passthrough<NumInputs_, NumericType_> >
@@ -62,7 +44,7 @@ public:
 
   static void Backward(const cv::Mat& X, const cv::Mat& W, const cv::Mat& Y,
                        const cv::Mat& dLdY, cv::Mat* dLdW, cv::Mat* dLdX);
-  static void TruncateL2(NumericType maxNorm, cv::Mat* W);
+  static void TruncateL2(NumericType maxNormSq, cv::Mat* W);
 };
 
 template <int NumInputs_, int NumOutputs_, typename NumericType_ = double>
@@ -83,7 +65,7 @@ public:
 
   static void Backward(const cv::Mat& X, const cv::Mat& W, const cv::Mat& Y,
                        const cv::Mat& dLdY, cv::Mat* dLdW, cv::Mat* dLdX);
-  static void TruncateL2(NumericType maxNorm, cv::Mat* W);
+  static void TruncateL2(NumericType maxNormSq, cv::Mat* W);
 };
 
 template <int NumInputs_, typename NumericType_ = double>
@@ -101,7 +83,7 @@ public:
 
   static void Backward(const cv::Mat& X, const cv::Mat& W, const cv::Mat& Y,
                        const cv::Mat& dLdY, cv::Mat* dLdW, cv::Mat* dLdX);
-  static void TruncateL2(NumericType maxNorm, cv::Mat* W);
+  static void TruncateL2(NumericType maxNormSq, cv::Mat* W);
 };
 
 template <int NumClasses_, typename NumericType_ = double>
@@ -119,7 +101,7 @@ public:
 
   static void Backward(const cv::Mat& X, const cv::Mat& W, const cv::Mat& Y,
                        const cv::Mat& dLdY, cv::Mat* dLdW, cv::Mat* dLdX);
-  static void TruncateL2(NumericType maxNorm, cv::Mat* W);
+  static void TruncateL2(NumericType maxNormSq, cv::Mat* W);
 };
 
 struct NLLCriterion
@@ -147,36 +129,6 @@ StandardLayer<LayerType_>::StandardLayer()
   STATIC_ASSERT(LayerType::NumParameters >= 0, "NumParameters >= 0");
 }
 
-template <typename LayerType_, int DropoutProbability_>
-DropoutLayer<LayerType_, DropoutProbability_>::DropoutLayer()
-: dropoutEnabled(false),
-  dropoutProbability(DropoutProbability / 100.0)
-{
-  STATIC_ASSERT((LayerType::DropoutProbability <= 100) && (LayerType::DropoutProbability >= 0),
-                "0 <= DropoutProbability <= 100");
-}
-
-template <typename LayerType_, int DropoutProbability_>
-inline
-bool DropoutLayer<LayerType_, DropoutProbability_>::DropoutEnabled() const
-{
-  return dropoutEnabled;
-}
-
-template <typename LayerType_, int DropoutProbability_>
-inline
-void DropoutLayer<LayerType_, DropoutProbability_>::EnableDropout()
-{
-  dropoutEnabled = true;
-}
-
-template <typename LayerType_, int DropoutProbability_>
-inline
-void DropoutLayer<LayerType_, DropoutProbability_>::DisableDropout()
-{
-  dropoutEnabled = false;
-}
-
 template <int NumInputs_, typename NumericType_>
 inline
 void Passthrough<NumInputs_, NumericType_>
@@ -199,7 +151,7 @@ void Passthrough<NumInputs_, NumericType_>
 template <int NumInputs_, typename NumericType_>
 inline
 void Passthrough<NumInputs_, NumericType_>
-::TruncateL2(NumericType /*maxNorm*/, cv::Mat* /*W*/)
+::TruncateL2(NumericType /*maxNormSq*/, cv::Mat* /*W*/)
 {}
 
 template <int NumInputs_, int NumOutputs_, typename NumericType_>
@@ -240,35 +192,36 @@ void Linear<NumInputs_, NumOutputs_, NumericType_>
 template <int NumInputs_, int NumOutputs_, typename NumericType_>
 inline
 void Linear<NumInputs_, NumOutputs_, NumericType_>
-::TruncateL2(NumericType maxNorm, cv::Mat* W)
+::TruncateL2(NumericType maxNormSq, cv::Mat* W)
 {
   cv::Mat M = W->rowRange(0, ParamsLinearMat).reshape(1, NumOutputs);
   cv::Mat B = W->rowRange(ParamsLinearMat, NumParameters);
   // Check each row's norm.
+  const double scaleNumerator = std::sqrt(maxNormSq);
   for (int i = 0; i < M.rows; ++i)
   {
     cv::Mat r = M.row(i);
-    const double norm = cv::norm(r);
-    if (norm > maxNorm)
+    const double normSq = r.dot(r);
+    if (normSq > maxNormSq)
     {
-      const NumericType scaleFactor = static_cast<NumericType>(maxNorm / norm);
+      const NumericType scaleFactor = static_cast<NumericType>(scaleNumerator / std::sqrt(normSq));
       r *= scaleFactor;
-      std::cout << "norm = " << norm << ", "
-                   "updated norm = " << cv::norm(r) << ", "
-                   "l = " << maxNorm << std::endl;
+      std::cout << "normSq = " << normSq << ", "
+                   "updated normSq = " << r.dot(r) << ", "
+                   "l = " << maxNormSq << std::endl;
     }
-    assert(((maxNorm + 1e-6) - cv::norm(r)) > 0);
+    assert(((maxNormSq + 1e-6) - r.dot(r)) > 0);
   }
-  const double normB = cv::norm(B);
-  if (normB > maxNorm)
+  const double normBSq = B.dot(B);
+  if (normBSq > maxNormSq)
   {
-    const NumericType scaleFactor = static_cast<NumericType>(maxNorm / normB);
+    const NumericType scaleFactor = static_cast<NumericType>(scaleNumerator / std::sqrt(normBSq));
     B *= scaleFactor;
-    std::cout << "normB = " << normB << ", "
-                 "updated norm = " << cv::norm(B) << ", "
-                 "l = " << maxNorm << std::endl;
+    std::cout << "normBSq = " << normBSq << ", "
+                 "updated normSq = " << B.dot(B) << ", "
+                 "l = " << maxNormSq << std::endl;
   }
-  assert(((maxNorm + 1e-6) - cv::norm(B)) > 0);
+  assert(((maxNormSq + 1e-6) - B.dot(B)) > 0);
 }
 
 template <int NumInputs_, typename NumericType_>
@@ -309,7 +262,7 @@ void Tanh<NumInputs_, NumericType_>
 template <int NumInputs_, typename NumericType_>
 inline
 void Tanh<NumInputs_, NumericType_>
-::TruncateL2(NumericType /*maxNorm*/, cv::Mat* /*W*/)
+::TruncateL2(NumericType /*maxNormSq*/, cv::Mat* /*W*/)
 {}
 
 template <int NumClasses_, typename NumericType_>
@@ -393,7 +346,7 @@ void SoftMax<NumClasses_, NumericType_>
 template <int NumClasses_, typename NumericType_>
 inline
 void SoftMax<NumClasses_, NumericType_>
-::TruncateL2(NumericType /*maxNorm*/, cv::Mat* /*W*/)
+::TruncateL2(NumericType /*maxNormSq*/, cv::Mat* /*W*/)
 {}
 
 template <typename NNType>
@@ -451,7 +404,7 @@ SampleGradient(NNType* nn, const cv::Mat& xi, const cv::Mat& yi,
   const int trueLabel = yi.at<unsigned char>(0, 0);
   const NumericType nllGrad =
     static_cast<NumericType>(-1.0 / std::max<double>(yOut->at<NumericType>(trueLabel, 0), 1e-16));
-  *dLdY = cv::Scalar(0);
+  *dLdY *= 0;
   dLdY->at<NumericType>(trueLabel, 0) = nllGrad;
   // Backward pass.
   return nn->Backward(*dLdY);

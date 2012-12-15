@@ -1,5 +1,7 @@
 #ifndef SRC_CVMAT_POOL_H
 #define SRC_CVMAT_POOL_H
+#include "omp_lock.h"
+
 #include "cv.h"
 #include <vector>
 #include <omp.h>
@@ -14,56 +16,80 @@ typedef cv::Ptr<cv::Mat> CvMatPtr;
 class CvMatPool
 {
 public:
-  class Lock
+  class ScopedLock
   {
   public:
-    Lock(CvMatPool* pool_)
-      : pool(pool_)
-    {
-      omp_set_lock(&pool->lock);
-    }
-    ~Lock()
-    {
-      Release();
-    }
-    std::vector<cv::Mat*>* GetItems() const
-    {
-      return &pool->myLittleMats;
-    }
-    void Release()
-    {
-      if (pool)
-      {
-        omp_unset_lock(&pool->lock);
-      }
-      pool = NULL;
-    }
+    ScopedLock(CvMatPool* pool_);
+    ~ScopedLock();
+
+    std::vector<cv::Mat*>* GetItems() const;
+    void Release() const;
+
   private:
-    CvMatPool* pool;
+    ScopedLock(const ScopedLock&);
+    ScopedLock& operator=(const ScopedLock&);
+
+    mutable CvMatPool* pool;
+    OmpLock::ScopedLock lock;
   };
 
-  CvMatPool()
-    : lock(),
-      myLittleMats()
-  {
-    omp_init_lock(&lock);
-  }
-
-  ~CvMatPool()
-  {
-    omp_destroy_lock(&lock);
-    // These better be released.
-    const size_t numMats = myLittleMats.size();
-    for (size_t i = 0; i < numMats; ++i)
-    {
-      delete myLittleMats[i];
-    }
-  }
+  CvMatPool();
+  ~CvMatPool();
 
 private:
-  omp_lock_t lock;
+  CvMatPool(const CvMatPool&);
+  CvMatPool& operator=(const CvMatPool&);
+
+  OmpLock lock;
   std::vector<cv::Mat*> myLittleMats;
 };
+
+CvMatPool
+::ScopedLock::ScopedLock(CvMatPool* pool_)
+: pool(pool_),
+  lock(&pool->lock)
+{}
+
+CvMatPool
+::ScopedLock::~ScopedLock()
+{
+  Release();
+}
+
+std::vector<cv::Mat*>* CvMatPool
+::ScopedLock::GetItems() const
+{
+  if (pool)
+  {
+    return &pool->myLittleMats;
+  }
+  else
+  {
+    return NULL;
+  }
+}
+
+void CvMatPool
+::ScopedLock::Release() const
+{
+  lock.Unlock();
+  pool = NULL;
+}
+
+CvMatPool::CvMatPool()
+: lock(),
+  myLittleMats()
+{}
+
+CvMatPool::~CvMatPool()
+{
+  // These better be released.
+  const size_t numMats = myLittleMats.size();
+  for (size_t i = 0; i < numMats; ++i)
+  {
+    delete myLittleMats[i];
+  }
+}
 
 CvMatPool* GetCvMatPool()
 {
@@ -73,7 +99,7 @@ CvMatPool* GetCvMatPool()
 
 CvMatPtr CreateCvMatPtr()
 {
-  CvMatPool::Lock lock(GetCvMatPool());
+  CvMatPool::ScopedLock lock(GetCvMatPool());
   std::vector<cv::Mat*>* items = lock.GetItems();
   if (!items->empty())
   {
@@ -90,7 +116,7 @@ CvMatPtr CreateCvMatPtr()
 
 void DestroyCvMat(cv::Mat* obj)
 {
-  CvMatPool::Lock lock(GetCvMatPool());
+  CvMatPool::ScopedLock lock(GetCvMatPool());
   std::vector<cv::Mat*>* items = lock.GetItems();
   items->push_back(obj);
 }
