@@ -10,6 +10,51 @@
 
 using namespace blr;
 
+struct WeightExponentialDecay
+{
+  WeightExponentialDecay();
+
+  template <typename NNType>
+  void Initialize();
+
+  const cv::Mat* ComputeDeltaW(int t, const cv::Mat& dLdW);
+
+  enum { T = 500, };
+
+  double eps0;
+  double exp;
+  double rho0;
+  double rho1;
+  CvMatPtr deltaWPrev;
+};
+
+WeightExponentialDecay::WeightExponentialDecay()
+: eps0(10.0),
+  exp(0.998),
+  rho0(0.5),
+  rho1(0.99),
+  deltaWPrev(CreateCvMatPtr())
+{}
+
+template <typename NNType>
+void WeightExponentialDecay::Initialize()
+{
+  deltaWPrev->create(
+      NNType::NumParameters, NumericTypeToCvType<typename NNType::NumericType>::CvType);
+  (*deltaWPrev) = 0;
+}
+
+const cv::Mat* WeightExponentialDecay::ComputeDeltaW(int t, const cv::Mat& dLdW)
+{
+  const double epsT = eps0 * std::pow(exp, t);
+  const double tInv = 1.0 / std::max(t, 1);
+  const double rhoT = (t >= T) ? rho1 : (tInv * rho0) + ((1.0 - tInv) * rho1);
+  const double gradScale = -(1 - rhoT) * epsT;
+  (*deltaWPrev) *= rhoT;
+  cv::scaleAdd(dLdW, gradScale, *deltaWPrev, *deltaWPrev);
+  return deltaWPrev;
+}
+
 /// <summary>Parallelizable neural network trainer.</summary>
 template <typename NNType_, typename WeightUpdateType_, typename LearningRateDecay_>
 struct MiniBatchTrainer
@@ -53,22 +98,25 @@ template <typename NNType_, typename WeightUpdateType_, typename LearningRateDec
 void MiniBatchTrainer<NNType_, WeightUpdateType_, LearningRateDecay_>
 ::Run()
 {
+  const bool wasDropoutEnabled = nn->DropoutEnabled();
+  nn->EnableDropout();
   // Backprop.
   double sampleLoss;
   int sampleError;
   cv::Mat dLdY(NNType::NumClasses, 1, CvType);
   enum { DebugPrintEveryNSamples = 500, };
   const int dataTrainSize = dataTrain.first.rows;
-  // Get a gradient to accumulate into.
   int totalSamples = 0;
   int sampleIdx = 0;
+  //weightUpdater.Initialize<NNType>();
   for (int batchIdx = 0; batchIdx < numBatches; ++batchIdx)
   {
     cv::Mat* W;
     nn->GetW(&W);
+    // Get a gradient to accumulate into.
     CvMatPtr dwAccum = CreateCvMatPtr();
     dwAccum->create(W->size(), CvType);
-    const NumericType eta = static_cast<NumericType>(0.1 / batchSize);
+    const NumericType avgEtaScale = static_cast<NumericType>(0.001 / batchSize);
     for (int batchIdxJ = 0; batchIdxJ < batchSize; ++batchIdxJ, ++sampleIdx, ++totalSamples)
     {
       sampleIdx %= dataTrainSize;
@@ -76,14 +124,24 @@ void MiniBatchTrainer<NNType_, WeightUpdateType_, LearningRateDecay_>
       const cv::Mat yi = dataTrain.second.row(sampleIdx);
       const cv::Mat* dLdW = NLLCriterion::SampleGradient(nn, xi, yi,
                                                          &dLdY, &sampleLoss, &sampleError);
-      cv::scaleAdd(*dLdW, -eta, *dwAccum, *dwAccum);
+      cv::scaleAdd(*dLdW, -avgEtaScale, *dwAccum, *dwAccum);
       if (0 == (totalSamples % DebugPrintEveryNSamples))
       {
         std::cout << "Processed sample " << totalSamples << " of " << dataTrainSize << std::endl;
       }
     }
     // Apply gradient update once.
-    (*W) += *dwAccum;
+    const cv::Mat* deltaW = weightUpdater.ComputeDeltaW(batchIdx + 1, *deltaW);
+    (*W) += *deltaW;
+    // Get a new dropout state.
+    nn->RefreshDropoutMask();
+    // Truncate value from Hinton et. al. http://arxiv.org/abs/1207.0580.
+    nn->TruncateL2(static_cast<NumericType>(15));
+  }
+  // Return dropout state.
+  if (!wasDropoutEnabled)
+  {
+    nn->DisableDropout();
   }
 }
 
@@ -151,7 +209,7 @@ int main(int argc, char** argv)
                                                 args.asList[Args::Argv_DataTestLabels]);
 
   typedef float NumericType;
-  typedef DualLayerNNSoftmax<784, 10, 800, NumericType> NNType;
+  typedef DualLayerNNSoftmax<784, 10, 800, 20, 50, NumericType> NNType;
   std::cout << "Network architecture [I > H > H > O] is ["
             << NNType::NumInputs << " -> " << NNType::NumHiddenUnits << " -> "
             << NNType::NumHiddenUnits << " -> " << NNType::NumClasses << "]" << std::endl;
@@ -200,10 +258,11 @@ int main(int argc, char** argv)
                             &lossErrorPair.first, &lossErrorPair.second);
   lossErrors.push_back(lossErrorPair);
   // Backprop.
-  enum { NumBatches = 10, };
-  enum { BatchSize = 128, };
-  typedef MiniBatchTrainer<NNType, int, int> MiniBatchTrainerType;
-  MiniBatchTrainerType miniMatchTrainer(&nn0, 0, 0, dataTrain, NumBatches, BatchSize);
+  enum { NumBatches = 100, };
+  enum { BatchSize = 100, };
+  typedef MiniBatchTrainer<NNType, WeightExponentialDecay, int> MiniBatchTrainerType;
+  MiniBatchTrainerType miniMatchTrainer(&nn0, WeightExponentialDecay(),
+                                        0, dataTrain, NumBatches, BatchSize);
   miniMatchTrainer.Run();
   // Compute loss on training data.
   NLLCriterion::DatasetLoss(nn0, dataTrain.first, dataTrain.second,

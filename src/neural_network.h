@@ -16,7 +16,9 @@ namespace nn
 
 typedef std::pair<cv::Mat, cv::Mat> Dataset;
 
-template <int NumInputs_, int NumClasses_, int NumHiddenUnits_, typename NumericType_ = double>
+template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
+          int DropoutProbabilityInput_ = 0, int DropoutProbabilityHidden_ = 0,
+          typename NumericType_ = double>
 class DualLayerNNSoftmax
 {
 public:
@@ -25,6 +27,8 @@ public:
   enum { NumHiddenUnits = NumHiddenUnits_, };
   enum { NumClasses = NumClasses_, };
   enum { CvType = NumericTypeToCvType<NumericType>::CvType, };
+  enum { DropoutProbabilityInput = DropoutProbabilityInput_, };
+  enum { DropoutProbabilityHidden = DropoutProbabilityHidden_, };
 
   DualLayerNNSoftmax();
 
@@ -55,10 +59,21 @@ public:
                              Layer1a::NumInputs + Layer1b::NumInputs +
                              Layer2a::NumInputs + Layer2b::NumInputs +
                              Layer3a::NumInputs + Layer3b::NumInputs, };
+  enum { NumDropoutLayers = 3, };
+  enum { NumDropoutParameters = Layer0::NumOutputs +
+                                Layer1b::NumOutputs +
+                                Layer2b::NumOutputs, };
 
   const cv::Mat* Forward(const cv::Mat& X) const;
   const cv::Mat* Backward(const cv::Mat dLdY);
   void Reset();
+
+  void EnableDropout();
+  void DisableDropout();
+  bool DropoutEnabled();
+  void RefreshDropoutMask();
+
+  void TruncateL2(const NumericType maxNorm);
 
   void SetW(CvMatPtr W);
   void GetW(cv::Mat** W);
@@ -66,52 +81,99 @@ public:
 private:
   void UpdatePartitions();
 
-  // Flattened outputs for the entire network.
+  /// <summary>Mask to perform dropout when enabled.</summary>
+  cv::Mat dropoutMask;
+  /// </summary>Flattened outputs for the entire network.</summary>
   cv::Mat Y;
-  // Flattened parameter matrix for the entire network.
+  /// <summary>Flattened parameter matrix for the entire network.</summary>
   CvMatPtr WPtr;
-  // Flattened parameter gradient matrix for the entire network.
+  /// <summary>Flattened parameter gradient matrix for the entire network.</summary>
   cv::Mat dLdW;
-  // Flattened gradient matrix for the entire network.
+  /// <summary>Flattened gradient matrix for the entire network.</summary>
   cv::Mat dLdX;
 
   mutable cv::Mat yPartitions[NumSublayers];
   cv::Mat wPartitions[NumSublayers];
   cv::Mat dwPartitions[NumSublayers];
   cv::Mat dxPartitions[NumSublayers];
+  cv::Mat dropoutPartitions[NumDropoutLayers];
+
+  bool dropoutEnabled;
 };
 
-template <int NumInputs_, int NumClasses_, int NumHiddenUnits_, typename NumericType_>
-DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_, NumericType_>
+template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
+          int DropoutProbabilityInput_, int DropoutProbabilityHidden_, typename NumericType_>
+DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
+                   DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
 ::DualLayerNNSoftmax()
-: Y(NumInternalOutputs, 1, CvType),
+: dropoutMask(NumDropoutParameters, 1, CvType),
+  Y(NumInternalOutputs, 1, CvType),
   WPtr(),
   dLdW(NumParameters, 1, CvType),
   dLdX(NumInternalInputs, 1, CvType),
   yPartitions(),
   wPartitions(),
   dwPartitions(),
-  dxPartitions()
+  dxPartitions(),
+  dropoutEnabled(false)
 {
   SetW(CreateCvMatPtr());
   Reset();
+  RefreshDropoutMask();
+  dropoutPartitions[0] = dropoutMask.rowRange(0, Layer0::NumOutputs);
+  dropoutPartitions[1] = dropoutMask.rowRange(0, Layer1b::NumOutputs);
+  dropoutPartitions[2] = dropoutMask.rowRange(0, Layer2b::NumOutputs);
 }
 
-template <int NumInputs_, int NumClasses_, int NumHiddenUnits_, typename NumericType_>
-inline
-const cv::Mat* DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_, NumericType_>
+namespace detail
+{
+template <typename NumericType, int P>
+struct ApplyDropout
+{
+  static void Apply(bool enabled, const cv::Mat& dropout, cv::Mat* m)
+  {
+    if (enabled)
+    {
+      (*m).mul(dropout);
+    }
+    else
+    {
+      const NumericType dropoutScale = static_cast<NumericType>(100.0 / P);
+      (*m) *= dropoutScale;
+    }
+  }
+};
+template <typename NumericType>
+struct ApplyDropout<NumericType, 0>
+{
+  static void Apply(bool enabled, const cv::Mat& dropout, cv::Mat* m) {}
+};
+}
+
+template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
+          int DropoutProbabilityInput_, int DropoutProbabilityHidden_, typename NumericType_>
+const cv::Mat* DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
+                                  DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
 ::Forward(const cv::Mat& X) const
 {
+  using detail::ApplyDropout;
+
   int layerIdx = 0;
   Layer0::Forward(X, wPartitions[layerIdx], &yPartitions[layerIdx]);
+  ApplyDropout<NumericType, DropoutProbabilityInput>::Apply(
+      dropoutEnabled, dropoutPartitions[0], yPartitions + layerIdx);
   cv::Mat* yPrev = yPartitions; ++layerIdx;
   Layer1a::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
   ++yPrev; ++layerIdx;
   Layer1b::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
+  ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
+      dropoutEnabled, dropoutPartitions[1], yPartitions + layerIdx);
   ++yPrev; ++layerIdx;
   Layer2a::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
   ++yPrev; ++layerIdx;
   Layer2b::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
+  ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
+      dropoutEnabled, dropoutPartitions[2], yPartitions + layerIdx);
   ++yPrev; ++layerIdx;
   Layer3a::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
   ++yPrev; ++layerIdx;
@@ -150,9 +212,10 @@ struct BackpropIterator
   cv::Mat* dLdX;
 };
 
-template <int NumInputs_, int NumClasses_, int NumHiddenUnits_, typename NumericType_>
-inline
-const cv::Mat* DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_, NumericType_>
+template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
+          int DropoutProbabilityInput_, int DropoutProbabilityHidden_, typename NumericType_>
+const cv::Mat* DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
+                                  DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
 ::Backward(const cv::Mat dLdY)
 {
   // Base case.
@@ -177,9 +240,82 @@ const cv::Mat* DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_, Nume
   return &dLdW;
 }
 
-template <int NumInputs_, int NumClasses_, int NumHiddenUnits_, typename NumericType_>
+template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
+          int DropoutProbabilityInput_, int DropoutProbabilityHidden_, typename NumericType_>
 inline
-void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_, NumericType_>
+void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
+                        DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
+::EnableDropout()
+{
+  dropoutEnabled = true;
+}
+
+template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
+          int DropoutProbabilityInput_, int DropoutProbabilityHidden_, typename NumericType_>
+inline
+void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
+                        DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
+::DisableDropout()
+{
+  dropoutEnabled = false;
+}
+
+template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
+          int DropoutProbabilityInput_, int DropoutProbabilityHidden_, typename NumericType_>
+inline
+bool DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
+                        DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
+::DropoutEnabled()
+{
+  return dropoutEnabled;
+}
+
+template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
+          int DropoutProbabilityInput_, int DropoutProbabilityHidden_, typename NumericType_>
+inline
+void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
+                        DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
+::RefreshDropoutMask()
+{
+  // Perform Bernoulli on each output with given probability.
+  for (int i = 0; i < NumDropoutLayers; ++i)
+  {
+    const int dropoutProbability = (i < 1) ?
+                                   static_cast<int>(DropoutProbabilityHidden) :
+                                   static_cast<int>(DropoutProbabilityInput);
+    cv::Mat& dropout = dropoutPartitions[i];
+    const size_t numEles = dropout.rows;
+//    std::cout << i << ": ";
+    for (size_t j = 0; j < numEles; ++j)
+    {
+      dropout.at<NumericType>(j, 0) = (RandBound(100) < dropoutProbability) ? 1 : 0;
+//      std::cout << dropout.at<NumericType>(j, 0);
+    }
+//    std::cout << "\n" << std::endl;
+  }
+}
+
+template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
+          int DropoutProbabilityInput_, int DropoutProbabilityHidden_, typename NumericType_>
+inline
+void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
+                        DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
+::TruncateL2(const NumericType maxNorm)
+{
+  Layer0::TruncateL2(maxNorm, WPtr);
+  Layer1a::TruncateL2(maxNorm, WPtr);
+  Layer1b::TruncateL2(maxNorm, WPtr);
+  Layer2a::TruncateL2(maxNorm, WPtr);
+  Layer2b::TruncateL2(maxNorm, WPtr);
+  Layer3a::TruncateL2(maxNorm, WPtr);
+  Layer3b::TruncateL2(maxNorm, WPtr);
+}
+
+template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
+          int DropoutProbabilityInput_, int DropoutProbabilityHidden_, typename NumericType_>
+inline
+void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
+                        DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
 ::Reset()
 {
   // As per Hinton, et. al. http://arxiv.org/abs/1207.0580:
@@ -187,9 +323,11 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_, NumericType_>
   std::generate(WPtr->begin<NumericType>(), WPtr->end<NumericType>(), RatioUniformGenerator(0, 0.01));
 }
 
-template <int NumInputs_, int NumClasses_, int NumHiddenUnits_, typename NumericType_>
+template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
+          int DropoutProbabilityInput_, int DropoutProbabilityHidden_, typename NumericType_>
 inline
-void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_, NumericType_>
+void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
+                        DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
 ::SetW(CvMatPtr W)
 {
   WPtr = W;
@@ -198,9 +336,11 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_, NumericType_>
   UpdatePartitions();
 }
 
-template <int NumInputs_, int NumClasses_, int NumHiddenUnits_, typename NumericType_>
+template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
+          int DropoutProbabilityInput_, int DropoutProbabilityHidden_, typename NumericType_>
 inline
-void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_, NumericType_>
+void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
+                        DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
 ::GetW(cv::Mat** W)
 {
   *W = WPtr;
@@ -254,9 +394,11 @@ struct ParameterPartitionerIterator
   int dxIdx;
 };
 
-template <int NumInputs_, int NumClasses_, int NumHiddenUnits_, typename NumericType_>
+template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
+          int DropoutProbabilityInput_, int DropoutProbabilityHidden_, typename NumericType_>
 inline
-void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_, NumericType_>
+void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
+                        DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
 ::UpdatePartitions()
 {
   ParameterPartitionerIterator partitionIter(WPtr, &Y, &dLdW, &dLdX);
