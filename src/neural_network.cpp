@@ -45,7 +45,7 @@ void WeightExponentialDecay::Initialize(const NNType* /*nn*/)
   deltaWPrev->create(
       static_cast<int>(NNType::NumParameters), 1,
       NumericTypeToCvType<typename NNType::NumericType>::CvType);
-  (*deltaWPrev) *= 0;
+  (*deltaWPrev) = cv::Scalar(0);
 }
 
 const cv::Mat* WeightExponentialDecay::ComputeDeltaW(int t, const cv::Mat& dLdW)
@@ -58,6 +58,8 @@ const cv::Mat* WeightExponentialDecay::ComputeDeltaW(int t, const cv::Mat& dLdW)
                "epsT = " << epsT << ", gradScale = " << gradScale << std::endl;
   (*deltaWPrev) *= rhoT;
   cv::scaleAdd(dLdW, gradScale, *deltaWPrev, *deltaWPrev);
+  DETECT_NUMERICAL_ERRORS(dLdW);
+  DETECT_NUMERICAL_ERRORS(*deltaWPrev);
   return deltaWPrev;
 }
 
@@ -120,7 +122,7 @@ struct UpdateDelegator
   void Initialize(NNType* nn, const Dataset* dataTest_);
 
   template <typename NNType>
-  void SubmitGradient(int t, const CvMatPtr& update, NNType* nn);
+  void SubmitGradient(CvMatPtr update, NNType* nn);
 
   template <typename NNType>
   void Flush(NNType* nn);
@@ -167,7 +169,7 @@ void UpdateDelegator::Initialize(NNType* nn, const Dataset* dataTest_)
 }
 
 template <typename NNType>
-void UpdateDelegator::SubmitGradient(int t, const CvMatPtr& update, NNType* nn)
+void UpdateDelegator::SubmitGradient(CvMatPtr update, NNType* nn)
 {
   // Always update when not busy.
   OmpLock::ScopedLock myBusyLock(&busyLock, true);
@@ -178,9 +180,12 @@ void UpdateDelegator::SubmitGradient(int t, const CvMatPtr& update, NNType* nn)
     updates.Swap(&myUpdates);
     myUpdates.push_back(update);
     CvMatPtr newW = ProcessUpdates(myUpdates, nn);
+    DETECT_NUMERICAL_ERRORS(*newW);
+    const int tNow = t;
     // Lock again for update to W.
     OmpLock::ScopedLock myLockW(&latestWLock);
     latestW = newW;
+    DETECT_NUMERICAL_ERRORS(*latestW);
     // Make busy unlocked first so we have order ABAB.
     myBusyLock.Unlock();
     myLockW.Unlock();
@@ -193,7 +198,7 @@ void UpdateDelegator::SubmitGradient(int t, const CvMatPtr& update, NNType* nn)
                                 &lossTest, &errorsTest);
       myLockW.Lock();
       std::cout << "loss: " << lossTest << ", errors: " << errorsTest << std::endl;
-      std::cout << "Updated weights up to batch " << t << std::endl;
+      std::cout << "Updated weights up to batch " << tNow << std::endl;
       myLockW.Unlock();
     }
   }
@@ -211,9 +216,11 @@ void UpdateDelegator::Flush(NNType* nn)
   std::vector<CvMatPtr> myUpdates;
   updates.Swap(&myUpdates);
   CvMatPtr newW = ProcessUpdates(myUpdates, nn);
+  DETECT_NUMERICAL_ERRORS(*newW);
   // Lock again for update to W.
   OmpLock::ScopedLock myLockW(&latestWLock);
   latestW = newW;
+  DETECT_NUMERICAL_ERRORS(*latestW);
   // Make busy unlocked first so we have order ABAB.
   myBusyLock.Unlock();
   myLockW.Unlock();
@@ -227,6 +234,7 @@ void UpdateDelegator::ApplyWTo(NNType* nn)
   newW = latestW;
   myLockW.Unlock();
   nn->SetW(newW);
+  DETECT_NUMERICAL_ERRORS(*newW);
 }
 
 template <typename NNType>
@@ -240,9 +248,11 @@ CvMatPtr UpdateDelegator::ProcessUpdates(const std::vector<CvMatPtr>& myUpdates,
 //  const NumericType avgScale = static_cast<NumericType>(1.0 / numUpdates);
   for (size_t i = 0; i < numUpdates; ++i, ++t)
   {
+    DETECT_NUMERICAL_ERRORS(*myUpdates[i]);
     const double dbgGrad = cv::norm(*myUpdates[i]);
     std::cout << "||g_" << t << "|| = " << dbgGrad << std::endl;
     const cv::Mat* deltaW = learningRate.ComputeDeltaW(t, *myUpdates[i]);
+    DETECT_NUMERICAL_ERRORS(*deltaW);
     const double dbgDeltaNorm = cv::norm(*deltaW);
     std::cout << "||delta_" << t << "|| = " << dbgDeltaNorm << std::endl;
     (*newW) += *deltaW;
@@ -250,6 +260,7 @@ CvMatPtr UpdateDelegator::ProcessUpdates(const std::vector<CvMatPtr>& myUpdates,
     nn->SetW(newW);
     nn->TruncateL2(static_cast<typename NNType::NumericType>(MaxL2));
   }
+  DETECT_NUMERICAL_ERRORS(*newW);
   return newW;
 }
 
@@ -259,7 +270,7 @@ struct UpdateDelegatorWrapper
   UpdateDelegatorWrapper(UpdateDelegator* ud_);
 
   template <typename NNType>
-  void SubmitGradient(int t, const CvMatPtr& update, NNType* nn);
+  void SubmitGradient(CvMatPtr update, NNType* nn);
   template <typename NNType>
   void ApplyWTo(NNType* nn);
 
@@ -275,9 +286,9 @@ UpdateDelegatorWrapper::UpdateDelegatorWrapper(UpdateDelegator* ud_)
 {}
 
 template <typename NNType>
-void UpdateDelegatorWrapper::SubmitGradient(int t, const CvMatPtr& update, NNType* nn)
+void UpdateDelegatorWrapper::SubmitGradient(CvMatPtr update, NNType* nn)
 {
-  ud->SubmitGradient(t, update, nn);
+  ud->SubmitGradient(update, nn);
 }
 
 template <typename NNType>
@@ -337,12 +348,14 @@ MiniBatchTrainer<NNType_, WeightUpdateType_>
   dataTrain(dataTrain_),
   dataTest(dataTest_),
   numBatches(numBatches_),
-  batchSize(batchSize_)
+  batchSize(batchSize_),
+  sampleIdx(RandBound(dataTrain->first.rows)),
+  dLdY(NNType::NumClasses, 1, CvType)
 {}
 
 template <typename NNType_, typename WeightUpdateType_>
 void MiniBatchTrainer<NNType_, WeightUpdateType_>
-::Run(int t)
+::Run(int /*t*/)
 {
   ScopedDropoutEnabler<NNType> dropoutEnabled(nn);
   // Sync latest
@@ -356,10 +369,11 @@ void MiniBatchTrainer<NNType_, WeightUpdateType_>
 //  std::cout << "Starting batch " << t << std::endl;
   cv::Mat* W;
   nn->GetW(&W);
+  DETECT_NUMERICAL_ERRORS(*W);
   // Get a gradient to accumulate into.
   CvMatPtr dwAccum = CreateCvMatPtr();
   dwAccum->create(W->size(), CvType);
-  *dwAccum *= 0;
+  *dwAccum = cv::Scalar(0);
   for (int batchIdxJ = 0; batchIdxJ < batchSize; ++batchIdxJ, ++sampleIdx)
   {
     // Get a new dropout state.
@@ -369,10 +383,13 @@ void MiniBatchTrainer<NNType_, WeightUpdateType_>
     const cv::Mat yi = dataTrain->second.row(sampleIdx);
     const cv::Mat* dLdW = NLLCriterion::SampleGradient(nn, xi, yi,
                                                        &dLdY, &sampleLoss, &sampleError);
+    DETECT_NUMERICAL_ERRORS(*dLdW);
     cv::scaleAdd(*dLdW, avgScale, *dwAccum, *dwAccum);
+    DETECT_NUMERICAL_ERRORS(*dwAccum);
   }
   // Compute and submit this update.
-  weightUpdater.SubmitGradient(t, dwAccum, nn);
+  DETECT_NUMERICAL_ERRORS(*dwAccum);
+  weightUpdater.SubmitGradient(dwAccum, nn);
 }
 
 enum
@@ -445,7 +462,7 @@ int main(int argc, char** argv)
             << NNType::NumHiddenUnits << " -> " << NNType::NumClasses << "]" << std::endl;
   enum { CvType = NumericTypeToCvType<NumericType>::CvType, };
   std::cout << "CvType = " << CvType << std::endl;
-  //         Load data.
+  // Load data.
   std::cout << "Loading data..." << std::endl;
   Dataset dataTrain;
   Dataset dataTest;
@@ -479,6 +496,9 @@ int main(int argc, char** argv)
   assert(NNType::NumInputs == dataTrain.first.cols);
   // Instantiate networks and train.
   const int numProcessors = omp_get_num_procs();
+//  enum { ForceTestThreads = 32, };
+//  const int numProcessors = ForceTestThreads;
+//  omp_set_num_threads(ForceTestThreads);
   std::vector<NNType> networks(numProcessors);
   // There is only one update delegator for threadsafe updates.
   UpdateDelegator updateDelegator;

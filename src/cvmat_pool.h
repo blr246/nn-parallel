@@ -3,6 +3,7 @@
 #include "omp_lock.h"
 
 #include "cv.h"
+#include "cxmat.hpp"
 #include <vector>
 #include <omp.h>
 
@@ -53,7 +54,10 @@ CvMatPool
 CvMatPool
 ::ScopedLock::~ScopedLock()
 {
-  Release();
+  if (pool)
+  {
+    Release();
+  }
 }
 
 std::vector<cv::Mat*>* CvMatPool
@@ -72,6 +76,7 @@ std::vector<cv::Mat*>* CvMatPool
 void CvMatPool
 ::ScopedLock::Release() const
 {
+  assert(lock.Acquired());
   lock.Unlock();
   pool = NULL;
 }
@@ -119,6 +124,19 @@ void DestroyCvMat(cv::Mat* obj)
   CvMatPool::ScopedLock lock(GetCvMatPool());
   std::vector<cv::Mat*>* items = lock.GetItems();
   items->push_back(obj);
+}
+
+namespace detail
+{
+struct CvMatPoolInitailizer
+{
+  CvMatPoolInitailizer()
+  {
+    // Get things cooking.
+    CreateCvMatPtr();
+  }
+};
+CvMatPoolInitailizer g_cvMatPoolInitializer;
 }
 
 } // end ns nn

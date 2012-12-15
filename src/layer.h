@@ -1,7 +1,8 @@
 #ifndef SRC_LAYER_H
 #define SRC_LAYER_H
-#include "type_utils.h"
+//#include "type_utils.h"
 #include "static_assert.h"
+
 #include "opencv/cv.h"
 #include "opencv/cv.hpp"
 #include "opencv/cxmat.hpp"
@@ -9,6 +10,30 @@
 #include <limits>
 #include <cmath>
 #include <assert.h>
+
+//#define DETECT_NUMERICAL_ERRORS_ENABED
+#if defined(DETECT_NUMERICAL_ERRORS_ENABED)
+#define DETECT_NUMERICAL_ERRORS(cvMat)                                                            \
+  {                                                                                               \
+    /* Compute the sum. */                                                                        \
+    const double __detect_numerical_errors_norm_sq = (cvMat).dot((cvMat));                        \
+    const double __detect_numerical_errors_sum = cv::sum((cvMat)).val[0];                         \
+    /* Copmute the norm. */                                                                       \
+    const bool __detect_numerical_errors_valid =                                                  \
+      (__detect_numerical_errors_norm_sq < std::numeric_limits<double>::max() &&                  \
+       -1e20 < __detect_numerical_errors_sum && __detect_numerical_errors_sum < 1e20);            \
+    if (!__detect_numerical_errors_valid)                                                         \
+    {                                                                                             \
+      std::cout << __FILE__ << "(" << __LINE__ << ") : "                                          \
+                << "Detected numerical issue "                                                    \
+                   "||" << #cvMat << "||^2 = " << __detect_numerical_errors_norm_sq << ", "       \
+                   "SUM(" << #cvMat << ") = " << __detect_numerical_errors_sum << std::endl;      \
+    }                                                                                             \
+    assert(__detect_numerical_errors_valid);                                                      \
+  }
+#else
+#define DETECT_NUMERICAL_ERRORS(cvMat)
+#endif
 
 namespace blr
 {
@@ -136,6 +161,8 @@ void Passthrough<NumInputs_, NumericType_>
 {
   assert(X.rows == Y->rows && X.cols == Y->cols && X.type() == Y->type());
   X.copyTo(*Y);
+  DETECT_NUMERICAL_ERRORS(X);
+  DETECT_NUMERICAL_ERRORS(*Y);
 }
 
 template <int NumInputs_, typename NumericType_>
@@ -146,6 +173,9 @@ void Passthrough<NumInputs_, NumericType_>
 {
   assert(dLdY.rows == dLdX->rows && dLdY.cols == dLdX->cols && dLdY.type() == dLdX->type());
   dLdY.copyTo(*dLdX);
+  DETECT_NUMERICAL_ERRORS(X);
+  DETECT_NUMERICAL_ERRORS(dLdY);
+  DETECT_NUMERICAL_ERRORS(*dLdX);
 }
 
 template <int NumInputs_, typename NumericType_>
@@ -166,6 +196,9 @@ void Linear<NumInputs_, NumOutputs_, NumericType_>
          X.type() == W.type() && W.type() == Y->type());
   //*Y = M * X + B;
   cv::gemm(M, X, 1.0, B, 1.0, *Y);
+  DETECT_NUMERICAL_ERRORS(X);
+  DETECT_NUMERICAL_ERRORS(W);
+  DETECT_NUMERICAL_ERRORS(*Y);
 }
 
 template <int NumInputs_, int NumOutputs_, typename NumericType_>
@@ -187,6 +220,11 @@ void Linear<NumInputs_, NumOutputs_, NumericType_>
   cv::gemm(dLdY, X, 1.0, cv::Mat(), 0.0, dLdM, CV_GEMM_B_T);
   // dLdB = dLdY
   dLdY.copyTo(dLdB);
+  DETECT_NUMERICAL_ERRORS(X);
+  DETECT_NUMERICAL_ERRORS(W);
+  DETECT_NUMERICAL_ERRORS(dLdY);
+  DETECT_NUMERICAL_ERRORS(*dLdW);
+  DETECT_NUMERICAL_ERRORS(*dLdX);
 }
 
 template <int NumInputs_, int NumOutputs_, typename NumericType_>
@@ -222,6 +260,7 @@ void Linear<NumInputs_, NumOutputs_, NumericType_>
 //                 "l = " << maxNormSq << std::endl;
   }
   assert(((maxNormSq + 1e-6) - B.dot(B)) > 0);
+  DETECT_NUMERICAL_ERRORS(*W);
 }
 
 template <int NumInputs_, typename NumericType_>
@@ -238,6 +277,8 @@ void Tanh<NumInputs_, NumericType_>
   {
     *y = std::tanh(*x);
   }
+  DETECT_NUMERICAL_ERRORS(X);
+  DETECT_NUMERICAL_ERRORS(*Y);
 }
 
 template <int NumInputs_, typename NumericType_>
@@ -257,6 +298,9 @@ void Tanh<NumInputs_, NumericType_>
     *dx = static_cast<NumericType>(1.0 / std::max<double>(std::cosh(*x), 1e-16));
     *dx *= *dx * *dy;
   }
+  DETECT_NUMERICAL_ERRORS(X);
+  DETECT_NUMERICAL_ERRORS(dLdY);
+  DETECT_NUMERICAL_ERRORS(*dLdX);
 }
 
 template <int NumInputs_, typename NumericType_>
@@ -309,11 +353,8 @@ void SoftMax<NumClasses_, NumericType_>
       *Y = static_cast<NumericType>(1.0 / Y->rows);
     }
   }
-//  const double dbgNorm = cv::sum(*Y).val[0];
-//  if (!(std::abs(1.0 - dbgNorm) < 1.0e-6))
-//  {
-//    bool why = true;
-//  }
+  DETECT_NUMERICAL_ERRORS(X);
+  DETECT_NUMERICAL_ERRORS(*Y);
 }
 
 template <int NumClasses_, typename NumericType_>
@@ -341,6 +382,9 @@ void SoftMax<NumClasses_, NumericType_>
   }
   cv::multiply(dLdY, Y, *dLdX, -1.0);
   cv::scaleAdd(Y, Y.dot(dLdY), *dLdX, *dLdX);
+  DETECT_NUMERICAL_ERRORS(Y);
+  DETECT_NUMERICAL_ERRORS(dLdY);
+  DETECT_NUMERICAL_ERRORS(*dLdX);
 }
 
 template <int NumClasses_, typename NumericType_>
@@ -354,7 +398,10 @@ const cv::Mat* NLLCriterion::
 SampleLoss(const NNType& nn, const cv::Mat& xi, const cv::Mat& yi, double* loss, int* error)
 {
   typedef typename NNType::NumericType NumericType;
+  DETECT_NUMERICAL_ERRORS(xi);
+  DETECT_NUMERICAL_ERRORS(yi);
   const cv::Mat* yOut = nn.Forward(xi);
+  DETECT_NUMERICAL_ERRORS(*yOut);
   // Find max class label.
   int label = 0;
   double maxP = yOut->at<NumericType>(0, 0);
@@ -398,15 +445,22 @@ SampleGradient(NNType* nn, const cv::Mat& xi, const cv::Mat& yi,
                cv::Mat* dLdY, double* loss, int* error)
 {
   typedef typename NNType::NumericType NumericType;
+  DETECT_NUMERICAL_ERRORS(xi);
+  DETECT_NUMERICAL_ERRORS(yi);
   // Forward pass.
   const cv::Mat* yOut = SampleLoss(*nn, xi, yi, loss, error);
+//  std::cout << "yOut = " << MatTypeWrapper<NumericType>(*yOut);
+  DETECT_NUMERICAL_ERRORS(*yOut);
   // Compute loss gradient to get this party started.
   const int trueLabel = yi.at<unsigned char>(0, 0);
   const NumericType nllGrad =
     static_cast<NumericType>(-1.0 / std::max<double>(yOut->at<NumericType>(trueLabel, 0), 1e-16));
-  *dLdY *= 0;
+  *dLdY = cv::Scalar(0);
+//  std::cout << "nllGrad = " << nllGrad << std::endl;
   dLdY->at<NumericType>(trueLabel, 0) = nllGrad;
+//  std::cout << "dLdY = " << MatTypeWrapper<NumericType>(*dLdY);
   // Backward pass.
+  DETECT_NUMERICAL_ERRORS(*dLdY);
   return nn->Backward(*dLdY);
 }
 

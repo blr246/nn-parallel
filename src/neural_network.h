@@ -75,7 +75,7 @@ public:
 
   void TruncateL2(const NumericType maxNorm);
 
-  void SetW(const CvMatPtr& W);
+  void SetW(CvMatPtr W);
   void GetW(cv::Mat** W);
 
 private:
@@ -108,7 +108,7 @@ DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
 ::DualLayerNNSoftmax()
 : dropoutMask(NumDropoutParameters, 1, CvType),
   Y(NumInternalOutputs, 1, CvType),
-  WPtr(),
+  WPtr(CreateCvMatPtr()),
   dLdW(NumParameters, 1, CvType),
   dLdX(NumInternalInputs, 1, CvType),
   yPartitions(),
@@ -117,12 +117,14 @@ DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   dxPartitions(),
   dropoutEnabled(false)
 {
-  SetW(CreateCvMatPtr());
+  WPtr->create(NumParameters, 1, CvType);
+  SetW(WPtr);
   Reset();
   RefreshDropoutMask();
   dropoutPartitions[0] = dropoutMask.rowRange(0, Layer0::NumOutputs);
   dropoutPartitions[1] = dropoutMask.rowRange(0, Layer1b::NumOutputs);
   dropoutPartitions[2] = dropoutMask.rowRange(0, Layer2b::NumOutputs);
+  DETECT_NUMERICAL_ERRORS(*WPtr);
 }
 
 namespace detail
@@ -272,7 +274,6 @@ bool DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
 
 template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
           int DropoutProbabilityInput_, int DropoutProbabilityHidden_, typename NumericType_>
-inline
 void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
                         DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
 ::RefreshDropoutMask()
@@ -326,12 +327,12 @@ template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
 inline
 void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
                         DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
-::SetW(const CvMatPtr& W)
+::SetW(CvMatPtr W)
 {
+  assert(NULL != W && NumParameters == W->rows);
   WPtr = W;
-  assert(NULL != WPtr);
-  WPtr->create(NumParameters, 1, CvType);
   UpdatePartitions();
+  DETECT_NUMERICAL_ERRORS(*WPtr);
 }
 
 template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,

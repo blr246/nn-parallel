@@ -2,6 +2,7 @@
 #define SRC_DROPOUT_NN_PARALLEL_GTEST
 #include "neural_network.h"
 #include "layer.h"
+#include "type_utils.h"
 #include "rand_bound.h"
 
 #include "opencv/cxoperations.hpp"
@@ -9,40 +10,12 @@
 #include <algorithm>
 #include <limits>
 
-template <typename T>
-struct MatTypeWrapper
-{
-public:
-  explicit MatTypeWrapper(const cv::Mat& m_) : m(&m_) {}
-  const cv::Mat* m;
-};
-
-template <typename T>
-std::ostream& operator<<(std::ostream& stream, const MatTypeWrapper<T>& matTyped)
-{
-  const cv::Mat& mat = *matTyped.m;
-  // Loop over elements dims-wise.
-  const cv::MatConstIterator_<T> matEnd = mat.end<T>();
-  cv::MatConstIterator_<T> v = mat.begin<T>();
-  for (int r = 0; r < mat.rows; ++r)
-  {
-    stream << "[ ";
-    for (int c = 0; c < mat.cols; ++c, ++v)
-    {
-      stream << *v << " ";
-    }
-    stream << "]\n";
-  }
-  return stream.flush();
-}
-
-
 namespace _dropout_nn_parallel_gtest_
 {
 using namespace blr;
 
 template <typename T>
-void MatAssertNear(const cv::Mat& a, const cv::Mat& b, const T eps)
+void MatExpectNear(const cv::Mat& a, const cv::Mat& b, const T eps)
 {
   int maxDifferenceCoords[2] = {0, 0};
   T maxDifference = std::numeric_limits<T>::min();
@@ -61,13 +34,13 @@ void MatAssertNear(const cv::Mat& a, const cv::Mat& b, const T eps)
       }
     }
   }
-  ASSERT_LT(maxDifference, eps) << "Max difference violated by element ("
+  EXPECT_LT(maxDifference, eps) << "Max difference violated by element ("
                                 << maxDifferenceCoords[0] << ","
                                 << maxDifferenceCoords[1] << ")";
 }
 
 template <typename T>
-void MatAssertNotNear(const cv::Mat& a, const cv::Mat& b, const T eps)
+void MatExpectNotNear(const cv::Mat& a, const cv::Mat& b, const T eps)
 {
   for (int r = 0; r < a.rows; ++r)
   {
@@ -75,7 +48,7 @@ void MatAssertNotNear(const cv::Mat& a, const cv::Mat& b, const T eps)
     {
       const T& aij = a.at<T>(r, c);
       const T& bij = b.at<T>(r, c);
-      ASSERT_GT(std::abs(aij - bij), eps);
+      EXPECT_GT(std::abs(aij - bij), eps);
     }
   }
 }
@@ -121,7 +94,7 @@ public:
       LayerType hl;
       const cv::Mat Y0 = Y.clone();
       hl.Forward(X, W, &Y);
-      MatAssertNotNear<NumericType>(Y0, Y, 1.0e-6);
+      MatExpectNotNear<NumericType>(Y0, Y, 1.0e-6);
     }
     {
       SCOPED_TRACE("Backward");
@@ -135,8 +108,8 @@ public:
                              cv::Scalar(std::numeric_limits<NumericType>::max()));
       const cv::Mat dLdX0 = dLdX.clone();
       hl.Backward(X, W, Y, dLdY, &dLdW, &dLdX);
-      MatAssertNotNear<NumericType>(dLdW0, dLdW, 1.0e-6);
-      MatAssertNotNear<NumericType>(dLdX0, dLdX, 1.0e-6);
+      MatExpectNotNear<NumericType>(dLdW0, dLdW, 1.0e-6);
+      MatExpectNotNear<NumericType>(dLdX0, dLdX, 1.0e-6);
     }
   }
 };
@@ -245,7 +218,7 @@ struct LayerForwardBackwardFiniteDifferenceTester
       TestDLdXForward(X, W, &ddXForward);
       TestDLdXBackward(X, W, Y, &ddXBackward);
       // Look for absolute differences.
-      MatAssertNear<NumericType>(ddXForward, ddXBackward.t(), eps);
+      MatExpectNear<NumericType>(ddXForward, ddXBackward.t(), eps);
     }
     if (W.rows > 0)
     {
@@ -258,7 +231,7 @@ struct LayerForwardBackwardFiniteDifferenceTester
       // Compute forward/backward difference.
       TestDLdWForward(X, W, &ddWForward);
       TestDLdWBackward(X, W, Y, &ddWBackward);
-      MatAssertNear<NumericType>(ddWForward, ddWBackward.t(), eps);
+      MatExpectNear<NumericType>(ddWForward, ddWBackward.t(), eps);
     }
   }
 };
@@ -401,7 +374,7 @@ TEST(Softmax, IsNormalized)
     const cv::Mat Y0 = Y.clone();
     hl.Forward(X, cv::Mat(), &Y);
     const NumericType sum = static_cast<NumericType>(cv::sum(Y).val[0]);
-    ASSERT_NEAR(sum, 1, 1e-6);
+    EXPECT_NEAR(sum, 1, 1e-6);
   }
 }
 

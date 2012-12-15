@@ -1,3 +1,4 @@
+#include "cvmat_pool_gtest.h"
 #include "idx_cv_gtest.h"
 #include "nn_parallel_gtest.h"
 #include "rand_bound_gtest.h"

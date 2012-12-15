@@ -1,6 +1,7 @@
 #ifndef SRC_OMP_LOCK_H
 #define SRC_OMP_LOCK_H
 #include <omp.h>
+#include <assert.h>
 
 namespace blr
 {
@@ -66,16 +67,17 @@ OmpLock
 OmpLock
 ::ScopedLock::~ScopedLock()
 {
-  Unlock();
+  if (acquired)
+  {
+    omp_unset_lock(&lock->lock);
+  }
 }
 
 void OmpLock
 ::ScopedLock::Unlock() const
 {
-  if (acquired)
-  {
-    omp_unset_lock(&lock->lock);
-  }
+  assert(acquired);
+  omp_unset_lock(&lock->lock);
   acquired = false;
 }
 
