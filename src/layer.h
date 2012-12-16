@@ -282,7 +282,14 @@ void Linear<NumInputs_, NumOutputs_, NumericType_>
 //      std::cout << ssMsg.str(); std::cout.flush();
     }
     DETECT_NUMERICAL_ERRORS(r);
-    assert(((maxNormSq + 1e-6) - r.dot(r)) > 0);
+    if (r.dot(r) > (maxNormSq + 1e-2))
+    {
+      std::stringstream ssMsg;
+      ssMsg << "Whoa, bro, r.dot(r) " << std::dec << std::setprecision(4)
+            << r.dot(r) << " > " << maxNormSq << " maxNormSq\n";
+      std::cout << ssMsg.str(); std::cout.flush();
+    }
+    assert(((maxNormSq + 1e-2) - r.dot(r)) > 0);
   }
   const double normBSq = B.dot(B);
   if (normBSq > maxNormSq)
@@ -295,7 +302,7 @@ void Linear<NumInputs_, NumOutputs_, NumericType_>
 //              "l = " << maxNormSq << std::endl;
 //    std::cout << ssMsg.str(); std::cout.flush();
     DETECT_NUMERICAL_ERRORS(B);
-    assert(((maxNormSq + 1e-6) - B.dot(B)) > 0);
+    assert(((maxNormSq + 1e-2) - B.dot(B)) > 0);
   }
   DETECT_NUMERICAL_ERRORS(*W);
 }
@@ -354,8 +361,8 @@ void SoftMax<NumClasses_, NumericType_>
   assert(X.rows == Y->rows && X.type() == Y->type());
   DETECT_NUMERICAL_ERRORS(X);
   // Compute softmax as in Y = exp(-X) / \sum{exp(-X)}
-  cv::exp(X, *Y);
-  cv::pow(*Y, -1, *Y);
+  (*Y) = -1 * X;
+  cv::exp(*Y, *Y);
   // Perform Gibbs normalization. Sometimes this goes badly with infinities.
   const double preNormSum = cv::sum(*Y).val[0];
   const double preNormSq = Y->dot(*Y);
@@ -368,7 +375,10 @@ void SoftMax<NumClasses_, NumericType_>
   }
   else
   {
-    // Make all infinities 1, all non-infinities 1e-10.
+    std::stringstream ssMsg;
+    ssMsg << "Whoa, bro, preNormSum = " << preNormSum << ", preNormSq = " << preNormSq << "\n";
+    std::cout << ssMsg.str(); std::cout.flush();
+    // Make all infinities 1, all non-infinities 0.
     cv::MatIterator_<NumericType> y = Y->begin<NumericType>();
     const cv::MatConstIterator_<NumericType> yEnd = Y->end<NumericType>();
     int infCount = 0;
@@ -381,13 +391,12 @@ void SoftMax<NumClasses_, NumericType_>
       }
       else
       {
-        *y = 1e-10;
+        *y = 0;
       }
     }
     if (infCount > 0)
     {
-      const double sum = infCount + ((Y->rows - infCount) * 1e-10);
-      *Y *= static_cast<NumericType>(1.0 / sum);
+      *Y *= static_cast<NumericType>(1.0 / infCount);
     }
     else
     {
@@ -456,17 +465,10 @@ SampleLoss(const NNType& nn, const cv::Mat& xi, const cv::Mat& yi, double* loss,
   const int trueLabel = yi.at<unsigned char>(0, 0);
   *error = (trueLabel != label);
   const NumericType yLabel = yOut->at<NumericType>(trueLabel, 0);
-  if (yLabel < 0)
-  {
-    std::stringstream ssMsg;
-    ssMsg << "Bad label = " << yLabel << "\n"
-             "Using W " << std::hex << static_cast<void*>(nn.GetWPtr()->data) << "\n";
-    std::cout << ssMsg.str(); std::cout.flush();
-  }
   assert(yLabel >= 0);
   if (0 == yLabel)
   {
-    *loss = 1e16;
+    *loss = 1e10;
   }
   else
   {
@@ -506,9 +508,9 @@ SampleGradient(NNType* nn, const cv::Mat& xi, const cv::Mat& yi,
   DETECT_NUMERICAL_ERRORS(*yOut);
   // Compute loss gradient to get this party started.
   const int trueLabel = yi.at<unsigned char>(0, 0);
-  const NumericType pClass = std::max<NumericType>(yOut->at<NumericType>(trueLabel, 0), 1e-10);
+  const NumericType pClass = std::max<NumericType>(yOut->at<NumericType>(trueLabel, 0), 1e-16);
   assert(pClass > 0);
-  const NumericType nllGrad = static_cast<NumericType>(std::max(-1.0 / pClass, -1e20));
+  const NumericType nllGrad = static_cast<NumericType>(-1.0 / pClass);
   *dLdY = cv::Scalar::all(0);
   dLdY->at<NumericType>(trueLabel, 0) = nllGrad;
   DETECT_NUMERICAL_ERRORS(*dLdY);

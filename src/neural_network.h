@@ -41,30 +41,30 @@ public:
   typedef Tanh<NumHiddenUnits, NumericType> Layer1b;
   // vv Linear + Tahn (~50% dropout, Honton et. al.)
   typedef Linear<NumHiddenUnits, NumHiddenUnits, NumericType> Layer2a;
-  typedef Tanh<NumHiddenUnits, NumericType> Layer2b;
+//  typedef Tanh<NumHiddenUnits, NumericType> Layer2b;
   // vv Softmax
   typedef Linear<NumHiddenUnits, NumClasses, NumericType> Layer3a;
   typedef SoftMax<NumClasses, NumericType> Layer3b;
   //  v OUTPUT
 
-  enum { NumSublayers = 7, };
+  enum { NumSublayers = 5, /*7,*/ };
 
   enum { NumParameters = Layer0::NumParameters +
                          Layer1a::NumParameters + Layer1b::NumParameters +
-                         Layer2a::NumParameters + Layer2b::NumParameters +
+                         Layer2a::NumParameters + //Layer2b::NumParameters +
                          Layer3a::NumParameters + Layer3b::NumParameters, };
   enum { NumInternalOutputs = Layer0::NumOutputs +
                               Layer1a::NumOutputs + Layer1b::NumOutputs +
-                              Layer2a::NumOutputs + Layer2b::NumOutputs +
+                              Layer2a::NumOutputs + //Layer2b::NumOutputs +
                               Layer3a::NumOutputs + Layer3b::NumOutputs, };
   enum { NumInternalInputs = Layer0::NumInputs +
                              Layer1a::NumInputs + Layer1b::NumInputs +
-                             Layer2a::NumInputs + Layer2b::NumInputs +
+                             Layer2a::NumInputs + //Layer2b::NumInputs +
                              Layer3a::NumInputs + Layer3b::NumInputs, };
   enum { NumDropoutLayers = 3, };
   enum { NumDropoutParameters = Layer0::NumOutputs +
-                                Layer1b::NumOutputs +
-                                Layer2b::NumOutputs, };
+                                Layer1a::NumOutputs +
+                                Layer2a::NumOutputs, };
 
   const cv::Mat* Forward(const cv::Mat& X) const;
   const cv::Mat* Backward(const cv::Mat dLdY);
@@ -97,8 +97,9 @@ private:
   cv::Mat dLdX;
 
 #if !defined(NDEBUG)
-  unsigned char* dataPtrs[4];
-  unsigned char* dataPartitonPtrs[4 * NumSublayers];
+  enum { NumPersistentStorage = 4, };
+  unsigned char* dataPtrs[NumPersistentStorage];
+  unsigned char* dataPartitonPtrs[NumPersistentStorage * NumSublayers];
 
   void AssertDataPointersValid() const;
   void CollectDataPointers(unsigned char* main[], unsigned char* partitions[]) const;
@@ -134,8 +135,8 @@ DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   Reset();
   RefreshDropoutMask();
   dropoutPartitions[0] = dropoutMask.rowRange(0, Layer0::NumOutputs);
-  dropoutPartitions[1] = dropoutMask.rowRange(0, Layer1b::NumOutputs);
-  dropoutPartitions[2] = dropoutMask.rowRange(0, Layer2b::NumOutputs);
+  dropoutPartitions[1] = dropoutMask.rowRange(0, Layer1a::NumOutputs);
+  dropoutPartitions[2] = dropoutMask.rowRange(0, Layer2a::NumOutputs);
   DETECT_NUMERICAL_ERRORS(*WPtr);
 #if !defined(NDEBUG)
   CollectDataPointers(dataPtrs, dataPartitonPtrs);
@@ -166,8 +167,8 @@ DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   rhs.dLdX.copyTo(dLdX);
   SetWPtr(WPtr);
   dropoutPartitions[0] = dropoutMask.rowRange(0, Layer0::NumOutputs);
-  dropoutPartitions[1] = dropoutMask.rowRange(0, Layer1b::NumOutputs);
-  dropoutPartitions[2] = dropoutMask.rowRange(0, Layer2b::NumOutputs);
+  dropoutPartitions[1] = dropoutMask.rowRange(0, Layer1a::NumOutputs);
+  dropoutPartitions[2] = dropoutMask.rowRange(0, Layer2a::NumOutputs);
   DETECT_NUMERICAL_ERRORS(*WPtr);
 #if !defined(NDEBUG)
   CollectDataPointers(dataPtrs, dataPartitonPtrs);
@@ -187,15 +188,10 @@ struct ApplyDropout
     }
     else
     {
-      const NumericType dropoutScale = static_cast<NumericType>(100.0 / P);
+      const NumericType dropoutScale = static_cast<NumericType>(1.0 - (P / 100.0));
       (*m) *= dropoutScale;
     }
   }
-};
-template <typename NumericType>
-struct ApplyDropout<NumericType, 0>
-{
-  static void Apply(bool enabled, const cv::Mat& dropout, cv::Mat* m) {}
 };
 }
 
@@ -224,10 +220,10 @@ const cv::Mat* DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
       dropoutEnabled, dropoutPartitions[2], yPartitions + layerIdx);
   ++yPrev; ++layerIdx;
-  Layer2b::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
-  ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
-      dropoutEnabled, dropoutPartitions[2], yPartitions + layerIdx);
-  ++yPrev; ++layerIdx;
+//  Layer2b::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
+//  ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
+//      dropoutEnabled, dropoutPartitions[2], yPartitions + layerIdx);
+//  ++yPrev; ++layerIdx;
   Layer3a::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
   ++yPrev; ++layerIdx;
   Layer3b::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
@@ -287,8 +283,8 @@ const cv::Mat* DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
                           dwPartitions + NumSublayers - 2, dxPartitions + NumSublayers - 2);
   Layer3a::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
   bpIter.Next();
-  Layer2b::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
-  bpIter.Next();
+//  Layer2b::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
+//  bpIter.Next();
   Layer2a::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
   bpIter.Next();
   Layer1b::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
@@ -365,7 +361,7 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   Layer1a::TruncateL2(maxNorm, WPtr);
   Layer1b::TruncateL2(maxNorm, WPtr);
   Layer2a::TruncateL2(maxNorm, WPtr);
-  Layer2b::TruncateL2(maxNorm, WPtr);
+//  Layer2b::TruncateL2(maxNorm, WPtr);
   Layer3a::TruncateL2(maxNorm, WPtr);
   Layer3b::TruncateL2(maxNorm, WPtr);
 }
@@ -379,7 +375,8 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
 {
   // As per Hinton, et. al. http://arxiv.org/abs/1207.0580:
   //   w ~ N(0, 0.01)
-  std::generate(WPtr->begin<NumericType>(), WPtr->end<NumericType>(), RatioUniformGenerator(0, 0.01));
+  std::generate(WPtr->begin<NumericType>(), WPtr->end<NumericType>(),
+                RatioUniformGenerator(0, 0.01));
 }
 
 template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
@@ -462,13 +459,21 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
 ::UpdatePartitions()
 {
   ParameterPartitionerIterator partitionIter(WPtr, &Y, &dLdW, &dLdX);
-  partitionIter.Next<Layer0> (wPartitions + 0, yPartitions + 0, dwPartitions + 0, dxPartitions + 0);
-  partitionIter.Next<Layer1a>(wPartitions + 1, yPartitions + 1, dwPartitions + 1, dxPartitions + 1);
-  partitionIter.Next<Layer1b>(wPartitions + 2, yPartitions + 2, dwPartitions + 2, dxPartitions + 2);
-  partitionIter.Next<Layer2a>(wPartitions + 3, yPartitions + 3, dwPartitions + 3, dxPartitions + 3);
-  partitionIter.Next<Layer2b>(wPartitions + 4, yPartitions + 4, dwPartitions + 4, dxPartitions + 4);
-  partitionIter.Next<Layer3a>(wPartitions + 5, yPartitions + 5, dwPartitions + 5, dxPartitions + 5);
-  partitionIter.Next<Layer3b>(wPartitions + 6, yPartitions + 6, dwPartitions + 6, dxPartitions + 6);
+  int i = 0;
+  partitionIter.Next<Layer0> (wPartitions + i, yPartitions + i, dwPartitions + i, dxPartitions + i);
+  ++i;
+  partitionIter.Next<Layer1a>(wPartitions + i, yPartitions + i, dwPartitions + i, dxPartitions + i);
+  ++i;
+  partitionIter.Next<Layer1b>(wPartitions + i, yPartitions + i, dwPartitions + i, dxPartitions + i);
+  ++i;
+  partitionIter.Next<Layer2a>(wPartitions + i, yPartitions + i, dwPartitions + i, dxPartitions + i);
+  ++i;
+//  partitionIter.Next<Layer2b>(wPartitions + i, yPartitions + i, dwPartitions + i, dxPartitions + i);
+//  ++i;
+  partitionIter.Next<Layer3a>(wPartitions + i, yPartitions + i, dwPartitions + i, dxPartitions + i);
+  ++i;
+  partitionIter.Next<Layer3b>(wPartitions + i, yPartitions + i, dwPartitions + i, dxPartitions + i);
+  ++i;
   assert(Y.rows == partitionIter.yIdx);
   assert(WPtr->rows == partitionIter.wIdx);
   assert(dLdW.rows == partitionIter.dwIdx);
@@ -483,8 +488,8 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
                         DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
 ::AssertDataPointersValid() const
 {
-  unsigned char* nowDataPtrs[4];
-  unsigned char* nowDataPartitonPtrs[4 * NumSublayers];
+  unsigned char* nowDataPtrs[NumPersistentStorage];
+  unsigned char* nowDataPartitonPtrs[NumPersistentStorage * NumSublayers];
   CollectDataPointers(nowDataPtrs, nowDataPartitonPtrs);
   assert(0 == std::memcmp(nowDataPtrs, dataPtrs, sizeof(nowDataPtrs)) &&
          0 == std::memcmp(nowDataPartitonPtrs, dataPartitonPtrs, sizeof(nowDataPartitonPtrs)));
