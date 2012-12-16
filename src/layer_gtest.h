@@ -1,6 +1,5 @@
-#ifndef SRC_DROPOUT_NN_PARALLEL_GTEST
-#define SRC_DROPOUT_NN_PARALLEL_GTEST
-#include "neural_network.h"
+#ifndef SRC_LAYER_GTEST
+#define SRC_LAYER_GTEST
 #include "layer.h"
 #include "type_utils.h"
 #include "rand_bound.h"
@@ -380,4 +379,4 @@ TEST(Softmax, IsNormalized)
 
 }
 
-#endif //SRC_DROPOUT_NN_PARALLEL_GTEST
+#endif //SRC_LAYER_GTEST

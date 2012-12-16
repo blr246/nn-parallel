@@ -170,12 +170,12 @@ DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   dropoutEnabled(false)
 {
   WPtr->create(NumParameters, 1, CvType);
+  Reset();
   UpdatePartitions();
 #if !defined(NDEBUG)
   CollectDataPointers(dataPtrs, dataPartitonPtrs);
 #endif
   SetWPtr(WPtr);
-  Reset();
   RefreshDropoutMask();
   DETECT_NUMERICAL_ERRORS(*WPtr);
 }
@@ -212,7 +212,6 @@ DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   CollectDataPointers(dataPtrs, dataPartitonPtrs);
 #endif
   SetWPtr(WPtr);
-  Reset();
   DETECT_NUMERICAL_ERRORS(*WPtr);
 }
 
@@ -425,11 +424,7 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
 {
   // As per Hinton, et. al. http://arxiv.org/abs/1207.0580:
   //   w ~ N(0, 0.01)
-  std::generate(WPtr->begin<NumericType>(), WPtr->end<NumericType>(),
-                RatioUniformGenerator(0, 0.01));
-#if !defined(NDEBUG)
-  AssertDataPointersValid();
-#endif
+  cv::randn(*WPtr, cv::Scalar::all(0), cv::Scalar::all(0.01));
 }
 
 template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,

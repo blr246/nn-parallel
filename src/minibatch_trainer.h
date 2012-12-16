@@ -240,7 +240,7 @@ inline
 void UpdateDelegator::Initialize(NNType* nn,
                                  const Dataset* dataTrain_, const Dataset* dataTest_)
 {
-  dataTrain = dataTest_;
+  dataTrain = dataTrain_;
   dataTest = dataTest_;
   nn->GetWPtr()->copyTo(*latestWPtr);
   learningRate.Initialize(nn);
@@ -275,37 +275,36 @@ void UpdateDelegator::SubmitGradient(CvMatPtr update, NNType* nn)
     myLockW.Unlock();
     DETECT_NUMERICAL_ERRORS(*latestW);
 
-#pragma omp master
-    {
-      ScopedDropoutDisabler<NNType> disableDropout(nn);
-      double lossTrain;
-      int errorsTrain;
-      ssMsg.str("");
-      ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
-            << "Computing train loss nn.W "
-            << std::hex << static_cast<void*>(nn->GetWPtr()->data) << "\n";
-      std::cout << ssMsg.str(); std::cout.flush();
-      NLLCriterion::DatasetLoss(*nn, dataTrain->first, dataTrain->second, &lossTrain, &errorsTrain);
-      ssMsg.str("");
-      ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
-            << "Train loss for nn.W " << std::hex << static_cast<void*>(nn->GetWPtr()->data) << "\n"
-               "train loss: " << lossTrain << ", train errors: " << std::dec << errorsTrain << "\n";
-      std::cout << ssMsg.str(); std::cout.flush();
-      double lossTest;
-      int errorsTest;
-      ssMsg.str("");
-      ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
-            << "Computing test loss nn.W "
-            << std::hex << static_cast<void*>(nn->GetWPtr()->data) << "\n";
-      std::cout << ssMsg.str(); std::cout.flush();
-      NLLCriterion::DatasetLoss(*nn, dataTest->first, dataTest->second, &lossTest, &errorsTest);
-      ssMsg.str("");
-      ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
-            << "Test loss for nn.W " << std::hex << static_cast<void*>(nn->GetWPtr()->data) << "\n"
-               "test loss: " << lossTest << ", test errors: " << std::dec << errorsTest << "\n";
-      ssMsg << "Updated weights for all t < " << tNow << std::endl;
-      std::cout << ssMsg.str(); std::cout.flush();
-    }
+//    {
+//      ScopedDropoutDisabler<NNType> disableDropout(nn);
+//      double lossTrain;
+//      int errorsTrain;
+//      ssMsg.str("");
+//      ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
+//            << "Computing train loss nn.W "
+//            << std::hex << static_cast<void*>(nn->GetWPtr()->data) << "\n";
+//      std::cout << ssMsg.str(); std::cout.flush();
+//      NLLCriterion::DatasetLoss(*nn, dataTrain->first, dataTrain->second, &lossTrain, &errorsTrain);
+//      ssMsg.str("");
+//      ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
+//            << "Train loss for nn.W " << std::hex << static_cast<void*>(nn->GetWPtr()->data) << "\n"
+//               "train loss: " << lossTrain << ", train errors: " << std::dec << errorsTrain << "\n";
+//      std::cout << ssMsg.str(); std::cout.flush();
+//      double lossTest;
+//      int errorsTest;
+//      ssMsg.str("");
+//      ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
+//            << "Computing test loss nn.W "
+//            << std::hex << static_cast<void*>(nn->GetWPtr()->data) << "\n";
+//      std::cout << ssMsg.str(); std::cout.flush();
+//      NLLCriterion::DatasetLoss(*nn, dataTest->first, dataTest->second, &lossTest, &errorsTest);
+//      ssMsg.str("");
+//      ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
+//            << "Test loss for nn.W " << std::hex << static_cast<void*>(nn->GetWPtr()->data) << "\n"
+//               "test loss: " << lossTest << ", test errors: " << std::dec << errorsTest << "\n";
+//      ssMsg << "Updated weights for all t < " << tNow << std::endl;
+//      std::cout << ssMsg.str(); std::cout.flush();
+//    }
   }
   else
   {

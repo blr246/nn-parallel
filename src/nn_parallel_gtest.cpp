@@ -1,7 +1,8 @@
-#include "cvmat_pool_gtest.h"
-#include "idx_cv_gtest.h"
-#include "nn_parallel_gtest.h"
-#include "rand_bound_gtest.h"
+//#include "cvmat_pool_gtest.h"
+//#include "idx_cv_gtest.h"
+//#include "layer_gtest.h"
+#include "neural_network_gtest.h"
+//#include "rand_bound_gtest.h"
 
 #include "gtest/gtest.h"
 #include <iostream>

@@ -210,18 +210,18 @@ int main(int argc, char** argv)
     std::cout << "Warm start epoch " << (batchIdx + 1) << " of " << NumWarmStartEpochs << std::endl;
     trainer.Run(batchIdx);
   }
-  {
-    double lossTrain;
-    int errorsTrain;
-    ComputeDatasetLossParallel(dataTrain, updateDelegator, &networks, &lossTrain, &errorsTrain);
-    std::cout << "TRAIN loss:\n"
-                 "loss: " << lossTrain << ", errors: " << std::dec << errorsTrain << std::endl;
-    double lossTest;
-    int errorsTest;
-    ComputeDatasetLossParallel(dataTest, updateDelegator, &networks, &lossTest, &errorsTest);
-    std::cout << "TEST loss:\n"
-                 "loss: " << lossTest << ", errors: " << std::dec << errorsTest << std::endl;
-  }
+//  {
+//    double lossTrain;
+//    int errorsTrain;
+//    ComputeDatasetLossParallel(dataTrain, updateDelegator, &networks, &lossTrain, &errorsTrain);
+//    std::cout << "TRAIN loss:\n"
+//                 "loss: " << lossTrain << ", errors: " << std::dec << errorsTrain << std::endl;
+//    double lossTest;
+//    int errorsTest;
+//    ComputeDatasetLossParallel(dataTest, updateDelegator, &networks, &lossTest, &errorsTest);
+//    std::cout << "TEST loss:\n"
+//                 "loss: " << lossTest << ", errors: " << std::dec << errorsTest << std::endl;
+//  }
   // Parallel pandemonium!
 #pragma omp parallel for schedule(dynamic, 1)
   for (int batchIdx = NumWarmStartEpochs; batchIdx < NumBatches; ++batchIdx)
