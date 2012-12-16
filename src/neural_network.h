@@ -2,12 +2,13 @@
 #include "layer.h"
 #include "rand_bound.h"
 #include "cvmat_pool.h"
+#include "type_utils.h"
 
 #include "opencv/cv.h"
-#include "opencv/cv.hpp"
 #include <algorithm>
 #include <functional>
 #include <utility>
+#include <cstring>
 
 namespace blr
 {
@@ -70,13 +71,13 @@ public:
 
   void EnableDropout();
   void DisableDropout();
-  bool DropoutEnabled();
+  bool DropoutEnabled() const;
   void RefreshDropoutMask();
 
   void TruncateL2(const NumericType maxNorm);
 
-  void SetW(CvMatPtr W);
-  void GetW(cv::Mat** W);
+  void SetWPtr(CvMatPtr newWPtr);
+  CvMatPtr GetWPtr() const;
 
 private:
   void UpdatePartitions();
@@ -91,6 +92,14 @@ private:
   cv::Mat dLdW;
   /// <summary>Flattened gradient matrix for the entire network.</summary>
   cv::Mat dLdX;
+
+#if !defined(NDEBUG)
+  void* dataPtrs[4];
+  void* dataPartitonPtrs[4][NumSublayers];
+
+  void AssertDataPointersValid() const;
+  void CollectDataPointers(void* main[], void* partitions[]) const;
+#endif
 
   mutable cv::Mat yPartitions[NumSublayers];
   cv::Mat wPartitions[NumSublayers];
@@ -118,13 +127,16 @@ DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   dropoutEnabled(false)
 {
   WPtr->create(NumParameters, 1, CvType);
-  SetW(WPtr);
+  SetWPtr(WPtr);
   Reset();
   RefreshDropoutMask();
   dropoutPartitions[0] = dropoutMask.rowRange(0, Layer0::NumOutputs);
   dropoutPartitions[1] = dropoutMask.rowRange(0, Layer1b::NumOutputs);
   dropoutPartitions[2] = dropoutMask.rowRange(0, Layer2b::NumOutputs);
   DETECT_NUMERICAL_ERRORS(*WPtr);
+#if !defined(NDEBUG)
+  CollectDataPointers(&dataPtrs[0], dataPartitonPtrs[0]);
+#endif
 }
 
 namespace detail
@@ -166,12 +178,16 @@ const cv::Mat* DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
       dropoutEnabled, dropoutPartitions[0], yPartitions + layerIdx);
   cv::Mat* yPrev = yPartitions; ++layerIdx;
   Layer1a::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
+  ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
+      dropoutEnabled, dropoutPartitions[1], yPartitions + layerIdx);
   ++yPrev; ++layerIdx;
   Layer1b::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
   ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
       dropoutEnabled, dropoutPartitions[1], yPartitions + layerIdx);
   ++yPrev; ++layerIdx;
   Layer2a::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
+  ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
+      dropoutEnabled, dropoutPartitions[2], yPartitions + layerIdx);
   ++yPrev; ++layerIdx;
   Layer2b::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
   ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
@@ -181,6 +197,11 @@ const cv::Mat* DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   ++yPrev; ++layerIdx;
   Layer3b::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
   ++yPrev; ++layerIdx;
+
+#if !defined(NDEBUG)
+  AssertDataPointersValid();
+#endif
+
   return yPrev;
 }
 
@@ -238,7 +259,11 @@ const cv::Mat* DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   Layer1b::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
   bpIter.Next();
   Layer1a::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
-  // Do not backpropagate input.
+
+#if !defined(NDEBUG)
+  AssertDataPointersValid();
+#endif
+
   return &dLdW;
 }
 
@@ -267,7 +292,7 @@ template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
 inline
 bool DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
                         DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
-::DropoutEnabled()
+::DropoutEnabled() const
 {
   return dropoutEnabled;
 }
@@ -327,22 +352,23 @@ template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
 inline
 void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
                         DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
-::SetW(CvMatPtr W)
+::SetWPtr(CvMatPtr newWPtr)
 {
-  assert(NULL != W && NumParameters == W->rows);
-  WPtr = W;
+  assert(NULL != WPtr && NumParameters == WPtr->rows);
+  WPtr = newWPtr;
   UpdatePartitions();
-  DETECT_NUMERICAL_ERRORS(*WPtr);
+  const cv::Mat* W = WPtr; (void)W;
+  DETECT_NUMERICAL_ERRORS(*W);
 }
 
 template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
           int DropoutProbabilityInput_, int DropoutProbabilityHidden_, typename NumericType_>
 inline
-void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
+CvMatPtr DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
                         DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
-::GetW(cv::Mat** W)
+::GetWPtr() const
 {
-  *W = WPtr;
+  return WPtr;
 }
 
 struct ParameterPartitionerIterator
@@ -413,6 +439,46 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   assert(dLdW.rows == partitionIter.dwIdx);
   assert(dLdX.rows == partitionIter.dxIdx);
 }
+
+#if !defined(NDEBUG)
+template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
+          int DropoutProbabilityInput_, int DropoutProbabilityHidden_, typename NumericType_>
+inline
+void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
+                        DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
+::AssertDataPointersValid() const
+{
+  void* nowDataPtrs[4];
+  void* nowDataPartitonPtrs[2][NumSublayers];
+  CollectDataPointers(&nowDataPtrs[0], nowDataPartitonPtrs[0]);
+  assert(0 == std::memcmp(nowDataPtrs, dataPtrs, sizeof(nowDataPtrs)) &&
+         0 == std::memcmp(nowDataPartitonPtrs, dataPartitonPtrs, sizeof(nowDataPartitonPtrs)));
+}
+
+template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
+          int DropoutProbabilityInput_, int DropoutProbabilityHidden_, typename NumericType_>
+inline
+void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
+                        DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
+::CollectDataPointers(void* main[], void* partitions[]) const
+{
+  main[0] = dropoutMask.data;
+  main[1] = Y.data;
+  main[2] = dLdW.data;
+  main[3] = dLdX.data;
+  memset(partitions[0], 0, sizeof(partitions[0]));
+  for (int i = 0; i < NumDropoutLayers; ++i)
+  {
+    partitions[0*NumSublayers + i] = dropoutPartitions[i].data;
+  }
+  for (int i = 0; i < NumSublayers; ++i)
+  {
+    partitions[1*NumSublayers + i] = yPartitions[i].data;
+    partitions[2*NumSublayers + i] = dwPartitions[i].data;
+    partitions[3*NumSublayers + i] = dxPartitions[i].data;
+  }
+}
+#endif
 
 template <typename NNType>
 struct ScopedDropoutEnabler

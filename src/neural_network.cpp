@@ -4,14 +4,17 @@
 
 #include <algorithm>
 #include <functional>
+#include <numeric>
 #include <vector>
 #include <utility>
 #include <iostream>
+#include <iomanip>
 #include <omp.h>
 
 using namespace blr;
 
 enum { MaxL2 = 15, };
+enum { HexAddrLabelColW = 60, };
 
 struct WeightExponentialDecay
 {
@@ -31,8 +34,10 @@ struct WeightExponentialDecay
 };
 
 WeightExponentialDecay::WeightExponentialDecay()
-: eps0(0.01),
-  exp(0.972),
+//: eps0(0.01),
+//  exp(0.95),
+: eps0(0.1),
+  exp(0.998),
   rho0(0.5),
   rho1(0.99),
   gradScaleMin(0.0001),
@@ -45,19 +50,28 @@ void WeightExponentialDecay::Initialize(const NNType* /*nn*/)
   deltaWPrev->create(
       static_cast<int>(NNType::NumParameters), 1,
       NumericTypeToCvType<typename NNType::NumericType>::CvType);
-  (*deltaWPrev) = cv::Scalar(0);
+  (*deltaWPrev) = cv::Scalar::all(0);
 }
 
 const cv::Mat* WeightExponentialDecay::ComputeDeltaW(int t, const cv::Mat& dLdW)
 {
-  const double rhoScale = t / static_cast<double>(T);
-  const double rhoT = (t >= T) ? rho1 : (rhoScale * rho1) + ((1.0 - rhoScale) * rho0);
-  const double epsT = eps0 * std::pow(exp, t);
-  const double gradScale = -std::max((1 - rhoT) * epsT, gradScaleMin);
-  std::cout << "t = " << t << ", rhoScale = " << rhoScale << ", rhoT = " << rhoT << ", "
-               "epsT = " << epsT << ", gradScale = " << gradScale << std::endl;
-  (*deltaWPrev) *= rhoT;
-  cv::scaleAdd(dLdW, gradScale, *deltaWPrev, *deltaWPrev);
+  // Just do a scaled update (exponential decay).
+  const double gradScale = -eps0 * std::pow(exp, t);
+  dLdW.copyTo(*deltaWPrev);
+  (*deltaWPrev) *= gradScale;
+
+//  const double rhoScale = t / static_cast<double>(T);
+//  const double rhoT = (t >= T) ? rho1 : (rhoScale * rho1) + ((1.0 - rhoScale) * rho0);
+//  const double epsT = eps0 * std::pow(exp, t);
+//  const double gradScale = -std::max((1 - rhoT) * epsT, gradScaleMin);
+//  std::stringstream ssMsg;
+//  ssMsg <<  std::dec
+//        << "t = " << t << ", rhoScale = " << rhoScale << ", rhoT = " << rhoT << ", "
+//           "epsT = " << epsT << ", gradScale = " << gradScale << std::endl;
+//  std::cout << ssMsg.str(); std::cout.flush();
+//  (*deltaWPrev) *= rhoT;
+//  cv::scaleAdd(dLdW, gradScale, *deltaWPrev, *deltaWPrev);
+
   DETECT_NUMERICAL_ERRORS(dLdW);
   DETECT_NUMERICAL_ERRORS(*deltaWPrev);
   return deltaWPrev;
@@ -136,7 +150,7 @@ private:
   template <typename NNType>
   CvMatPtr ProcessUpdates(const std::vector<CvMatPtr>& myUpdates, NNType* nn);
 
-  CvMatPtr latestW;
+  CvMatPtr latestWPtr;
   const Dataset* dataTest;
   WeightExponentialDecay learningRate;
   int t;
@@ -147,7 +161,7 @@ private:
 };
 
 UpdateDelegator::UpdateDelegator()
-: latestW(CreateCvMatPtr()),
+: latestWPtr(CreateCvMatPtr()),
   dataTest(NULL),
   learningRate(),
   t(0),
@@ -161,9 +175,7 @@ inline
 void UpdateDelegator::Initialize(NNType* nn, const Dataset* dataTest_)
 {
   dataTest = dataTest_;
-  cv::Mat* W;
-  nn->GetW(&W);
-  W->copyTo(*latestW);
+  nn->GetWPtr()->copyTo(*latestWPtr);
   learningRate.Initialize(nn);
   t = 0;
 }
@@ -179,32 +191,49 @@ void UpdateDelegator::SubmitGradient(CvMatPtr update, NNType* nn)
     std::vector<CvMatPtr> myUpdates;
     updates.Swap(&myUpdates);
     myUpdates.push_back(update);
-    CvMatPtr newW = ProcessUpdates(myUpdates, nn);
+    CvMatPtr newWPtr = ProcessUpdates(myUpdates, nn);
+    cv::Mat* newW = newWPtr; (void)newW;
     DETECT_NUMERICAL_ERRORS(*newW);
-    const int tNow = t;
     // Lock again for update to W.
     OmpLock::ScopedLock myLockW(&latestWLock);
-    latestW = newW;
-    DETECT_NUMERICAL_ERRORS(*latestW);
+    latestWPtr = newWPtr;
     // Make busy unlocked first so we have order ABAB.
+//    const int tNow = t;
     myBusyLock.Unlock();
+    std::stringstream ssMsg;
+    ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
+          << "Set latest W " << std::hex << static_cast<void*>(latestWPtr->data) << "\n";
+    std::cout << ssMsg.str(); std::cout.flush();
+    const cv::Mat* latestW = latestWPtr; (void)latestW;
     myLockW.Unlock();
-    // Compute loss on testing data.
-    {
-      double lossTest;
-      int errorsTest;
-      ScopedDropoutDisabler<NNType> disableDropout(nn);
-      NLLCriterion::DatasetLoss(*nn, dataTest->first, dataTest->second,
-                                &lossTest, &errorsTest);
-      myLockW.Lock();
-      std::cout << "loss: " << lossTest << ", errors: " << errorsTest << std::endl;
-      std::cout << "Updated weights up to batch " << tNow << std::endl;
-      myLockW.Unlock();
-    }
+    DETECT_NUMERICAL_ERRORS(*latestW);
+
+//    // Compute loss on testing data.
+//    {
+//      double lossTest;
+//      int errorsTest;
+//      ScopedDropoutDisabler<NNType> disableDropout(nn);
+//      ssMsg.str("");
+//      ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
+//            << "Computing loss nn.W " << std::hex << static_cast<void*>(nn->GetWPtr()->data) << "\n";
+//      std::cout << ssMsg.str(); std::cout.flush();
+//      NLLCriterion::DatasetLoss(*nn, dataTest->first, dataTest->second,
+//                                &lossTest, &errorsTest);
+//      ssMsg.str("");
+//      ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
+//            << "Loss for nn.W " << std::hex << static_cast<void*>(nn->GetWPtr()->data) << "\n";
+//      ssMsg << "loss: " << lossTest << ", errors: " << std::dec << errorsTest << std::endl;
+//      ssMsg << "Updated weights for all t < " << tNow << std::endl;
+//      std::cout << ssMsg.str(); std::cout.flush();
+//    }
   }
   else
   {
     // Push update, grab newest W, load, and go.
+    std::stringstream ssMsg;
+    ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
+          << "Pushing gradient " << std::hex << static_cast<void*>(update->data) << "\n";
+    std::cout << ssMsg.str(); std::cout.flush();
     updates.Push(update);
   }
 }
@@ -215,11 +244,13 @@ void UpdateDelegator::Flush(NNType* nn)
   OmpLock::ScopedLock myBusyLock(&busyLock);
   std::vector<CvMatPtr> myUpdates;
   updates.Swap(&myUpdates);
-  CvMatPtr newW = ProcessUpdates(myUpdates, nn);
+  CvMatPtr newWPtr = ProcessUpdates(myUpdates, nn);
+  cv::Mat* newW = newWPtr; (void)newW;
   DETECT_NUMERICAL_ERRORS(*newW);
   // Lock again for update to W.
   OmpLock::ScopedLock myLockW(&latestWLock);
-  latestW = newW;
+  latestWPtr = newWPtr;
+  const cv::Mat* latestW = latestWPtr; (void)latestW;
   DETECT_NUMERICAL_ERRORS(*latestW);
   // Make busy unlocked first so we have order ABAB.
   myBusyLock.Unlock();
@@ -229,11 +260,16 @@ void UpdateDelegator::Flush(NNType* nn)
 template <typename NNType>
 void UpdateDelegator::ApplyWTo(NNType* nn)
 {
-  CvMatPtr newW;
+  CvMatPtr newWPtr;
   OmpLock::ScopedLock myLockW(&latestWLock);
-  newW = latestW;
+  newWPtr = latestWPtr;
   myLockW.Unlock();
-  nn->SetW(newW);
+  nn->SetWPtr(newWPtr);
+  const cv::Mat* newW = newWPtr; (void)newW;
+  std::stringstream ssMsg;
+  ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
+        << "Applying W " << std::hex << static_cast<void*>(newW->data) << "\n";
+  std::cout << ssMsg.str(); std::cout.flush();
   DETECT_NUMERICAL_ERRORS(*newW);
 }
 
@@ -242,26 +278,46 @@ CvMatPtr UpdateDelegator::ProcessUpdates(const std::vector<CvMatPtr>& myUpdates,
 {
   typedef typename NNType::NumericType NumericType;
   // Process the updates.
-  CvMatPtr newW = CreateCvMatPtr();
+  CvMatPtr newWPtr = CreateCvMatPtr();
+  cv::Mat* newW = newWPtr;
+  const cv::Mat* latestW = latestWPtr;
   latestW->copyTo(*newW);
+  std::stringstream ssMsg;
+  ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
+        << "Processing new W " << std::hex << static_cast<void*>(newW->data) << "\n";
+  std::cout << ssMsg.str(); std::cout.flush();
   const size_t numUpdates = myUpdates.size();
 //  const NumericType avgScale = static_cast<NumericType>(1.0 / numUpdates);
   for (size_t i = 0; i < numUpdates; ++i, ++t)
   {
     DETECT_NUMERICAL_ERRORS(*myUpdates[i]);
-    const double dbgGrad = cv::norm(*myUpdates[i]);
-    std::cout << "||g_" << t << "|| = " << dbgGrad << std::endl;
-    const cv::Mat* deltaW = learningRate.ComputeDeltaW(t, *myUpdates[i]);
+    const cv::Mat* update = myUpdates[i];
+    const double dbgGrad = cv::norm(*update);
+    ssMsg.str("");
+    ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
+          << "Processing G " << std::hex << static_cast<void*>(update->data) << "\n"
+          << "||g_" << std::dec << t << "|| = " << dbgGrad << "\n";
+    std::cout << ssMsg.str(); std::cout.flush();
+    const cv::Mat* deltaW = learningRate.ComputeDeltaW(t, *update);
     DETECT_NUMERICAL_ERRORS(*deltaW);
     const double dbgDeltaNorm = cv::norm(*deltaW);
-    std::cout << "||delta_" << t << "|| = " << dbgDeltaNorm << std::endl;
+    ssMsg.str("");
+    ssMsg << "||delta_" << std::dec << t << "|| = " << dbgDeltaNorm << "\n";
+    std::cout << ssMsg.str(); std::cout.flush();
     (*newW) += *deltaW;
-//    cv::scaleAdd(*myUpdates[i], avgScale, *newW, *newW);
-    nn->SetW(newW);
+//    cv::scaleAdd(*update, avgScale, *newW, *newW);
+    nn->SetWPtr(newWPtr);
+    DETECT_NUMERICAL_ERRORS(*newW);
     nn->TruncateL2(static_cast<typename NNType::NumericType>(MaxL2));
+    DETECT_NUMERICAL_ERRORS(*newW);
   }
+  ssMsg.str("");
+  ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
+        << "Finished processing new W " << std::hex << static_cast<void*>(newW->data) << "\n"
+           "||W_" << std::dec << t << "|| = " << cv::norm(*newW) << "\n";
+  std::cout << ssMsg.str(); std::cout.flush();
   DETECT_NUMERICAL_ERRORS(*newW);
-  return newW;
+  return newWPtr;
 }
 
 struct UpdateDelegatorWrapper
@@ -367,16 +423,16 @@ void MiniBatchTrainer<NNType_, WeightUpdateType_>
   const NumericType avgScale = static_cast<NumericType>(1.0 / batchSize);
   // Do one batch.
 //  std::cout << "Starting batch " << t << std::endl;
-  cv::Mat* W;
-  nn->GetW(&W);
-  DETECT_NUMERICAL_ERRORS(*W);
+  const CvMatPtr WPtr = nn->GetWPtr();
+  DETECT_NUMERICAL_ERRORS(*WPtr);
   // Get a gradient to accumulate into.
   CvMatPtr dwAccum = CreateCvMatPtr();
-  dwAccum->create(W->size(), CvType);
-  *dwAccum = cv::Scalar(0);
+  dwAccum->create(WPtr->size(), CvType);
+  *dwAccum = cv::Scalar::all(0);
+  // br - What is the best policy for dropout refresh?
+//  nn->RefreshDropoutMask();
   for (int batchIdxJ = 0; batchIdxJ < batchSize; ++batchIdxJ, ++sampleIdx)
   {
-    // Get a new dropout state.
     nn->RefreshDropoutMask();
     sampleIdx %= dataTrainSize;
     const cv::Mat xi = dataTrain->first.row(sampleIdx).t();
@@ -390,6 +446,42 @@ void MiniBatchTrainer<NNType_, WeightUpdateType_>
   // Compute and submit this update.
   DETECT_NUMERICAL_ERRORS(*dwAccum);
   weightUpdater.SubmitGradient(dwAccum, nn);
+}
+
+template <typename NNType>
+void ComputeDatasetLossParallel(const Dataset& dataset, std::vector<NNType>* networks,
+                                double* loss, int* errors)
+{
+  const int numNetworks = static_cast<int>(networks->size());
+  std::vector<double> lossPerThread(numNetworks, 0);
+  std::vector<int> errorsPerThread(numNetworks, 0);
+  std::vector<Dataset> datasetPerThread(numNetworks);
+  const int datasetSize = dataset.first.rows;
+  const int numPointsPerThread = (datasetSize + numNetworks - 1) / numNetworks;
+  for (int i = 0; i < (numNetworks - 1); ++i)
+  {
+    Dataset& threadDataset = datasetPerThread[i];
+    const int rBegin = numNetworks * i;
+    threadDataset.first = dataset.first.rowRange(rBegin, rBegin + numPointsPerThread);
+    threadDataset.second = dataset.second.rowRange(rBegin, rBegin + numPointsPerThread);
+  }
+  {
+    const int rBegin = numPointsPerThread * (numNetworks - 1);
+    datasetPerThread.back().first = dataset.first.rowRange(rBegin, datasetSize);
+    datasetPerThread.back().second = dataset.second.rowRange(rBegin, datasetSize);
+  }
+#pragma omp parallel for num_threads(numNetworks)
+  for (int i = 0; i < numNetworks; ++i)
+  {
+    const Dataset& data = datasetPerThread[i];
+    double& loss = lossPerThread[i];
+    int& errors = errorsPerThread[i];
+    NNType& nn = networks->at(i);
+    ScopedDropoutDisabler<NNType> disableDropout(&nn);
+    NLLCriterion::DatasetLoss(nn, data.first, data.second, &loss, &errors);
+  }
+  *loss = std::accumulate(lossPerThread.begin(), lossPerThread.end(), 0);
+  *errors = std::accumulate(errorsPerThread.begin(), errorsPerThread.end(), 0);
 }
 
 enum
@@ -430,7 +522,7 @@ struct Args
 int main(int argc, char** argv)
 {
 #if defined(NDEBUG)
-  enum { MaxRows = 5000, };
+  enum { MaxRows = -1, }; // No limit.
 #else
   enum { MaxRows = 500, };
 #endif
@@ -455,8 +547,9 @@ int main(int argc, char** argv)
   const PathPair dataTestPaths = std::make_pair(args.asList[Args::Argv_DataTestPoints],
                                                 args.asList[Args::Argv_DataTestLabels]);
 
-  typedef float NumericType;
+  typedef double NumericType;
   typedef DualLayerNNSoftmax<784, 10, 800, 20, 50, NumericType> NNType;
+//  typedef DualLayerNNSoftmax<784, 10, 800, 0, 0, NumericType> NNType;
   std::cout << "Network architecture [I > H > H > O] is ["
             << NNType::NumInputs << " -> " << NNType::NumHiddenUnits << " -> "
             << NNType::NumHiddenUnits << " -> " << NNType::NumClasses << "]" << std::endl;
@@ -504,9 +597,15 @@ int main(int argc, char** argv)
   UpdateDelegator updateDelegator;
   updateDelegator.Initialize(&networks[0], &dataTest);
   // Setup mini batches.
+#if defined (NDEBUG)
   enum { NumBatches = 100, };
   enum { NumWarmStartEpochs = 5, };
   enum { BatchSize = 100, };
+#else
+  enum { NumBatches = 100, };
+  enum { NumWarmStartEpochs = 5, };
+  enum { BatchSize = 100, };
+#endif
   typedef MiniBatchTrainer<NNType, UpdateDelegatorWrapper> MiniBatchTrainerType;
   std::vector<MiniBatchTrainerType> miniBatchTrainers(numProcessors);
   for (int i = 0; i < numProcessors; ++i)
@@ -520,6 +619,19 @@ int main(int argc, char** argv)
     trainer.numBatches = NumBatches;
     trainer.batchSize = BatchSize;
     trainer.sampleIdx = RandBound(dataTrain.first.rows);
+    updateDelegator.ApplyWTo(&nn);
+  }
+  {
+    double lossTrain;
+    int errorsTrain;
+    ComputeDatasetLossParallel(dataTrain, &networks, &lossTrain, &errorsTrain);
+    std::cout << "TRAIN loss initial:\n"
+                 "loss: " << lossTrain << ", errors: " << std::dec << errorsTrain << std::endl;
+    double lossTest;
+    int errorsTest;
+    ComputeDatasetLossParallel(dataTest, &networks, &lossTest, &errorsTest);
+    std::cout << "TEST loss initial:\n"
+                 "loss: " << lossTest << ", errors: " << std::dec << errorsTest << std::endl;
   }
   // Run a few single-threaded epochs.
   for (int batchIdx = 0;  batchIdx < NumWarmStartEpochs; ++batchIdx)
@@ -527,6 +639,18 @@ int main(int argc, char** argv)
     MiniBatchTrainerType& trainer = miniBatchTrainers[0];
     std::cout << "Warm start epoch " << (batchIdx + 1) << " of " << NumWarmStartEpochs << std::endl;
     trainer.Run(batchIdx);
+  }
+  {
+    double lossTrain;
+    int errorsTrain;
+    ComputeDatasetLossParallel(dataTrain, &networks, &lossTrain, &errorsTrain);
+    std::cout << "TRAIN loss:\n"
+                 "loss: " << lossTrain << ", errors: " << std::dec << errorsTrain << std::endl;
+    double lossTest;
+    int errorsTest;
+    ComputeDatasetLossParallel(dataTest, &networks, &lossTest, &errorsTest);
+    std::cout << "TEST loss:\n"
+                 "loss: " << lossTest << ", errors: " << std::dec << errorsTest << std::endl;
   }
   // Parallel pandemonium!
 #pragma omp parallel for schedule(dynamic, 1)
@@ -539,15 +663,18 @@ int main(int argc, char** argv)
   }
   // Do final weight update.
   updateDelegator.Flush(&networks[0]);
-  // Compute loss on testing data.
+  std::cout << "Computing loss after " << NumBatches << " training epochs..." << std::endl;
   {
-    std::cout << "Computing loss after " << NumBatches << " training epochs..." << std::endl;
+    double lossTrain;
+    int errorsTrain;
+    ComputeDatasetLossParallel(dataTrain, &networks, &lossTrain, &errorsTrain);
+    std::cout << "TRAIN loss:\n"
+                 "loss: " << lossTrain << ", errors: " << std::dec << errorsTrain << std::endl;
     double lossTest;
     int errorsTest;
-    ScopedDropoutDisabler<NNType> disableDropout(&networks[0]);
-    NLLCriterion::DatasetLoss(networks[0], dataTest.first, dataTest.second,
-                              &lossTest, &errorsTest);
-    std::cout << "loss: " << lossTest << ", errors: " << errorsTest << std::endl;
+    ComputeDatasetLossParallel(dataTest, &networks, &lossTest, &errorsTest);
+    std::cout << "TEST loss:\n"
+                 "loss: " << lossTest << ", errors: " << std::dec << errorsTest << std::endl;
   }
   return 0;
 }

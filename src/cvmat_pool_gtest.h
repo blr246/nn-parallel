@@ -1,7 +1,7 @@
 #ifndef SRC_CVMAT_POOL_GTEST
 #define SRC_CVMAT_POOL_GTEST
 #include "cvmat_pool.h"
-#include "cxtypes.h"
+#include "cv.h"
 
 #include "gtest/gtest.h"
 #include <assert.h>

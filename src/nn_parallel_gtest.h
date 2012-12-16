@@ -5,7 +5,7 @@
 #include "type_utils.h"
 #include "rand_bound.h"
 
-#include "opencv/cxoperations.hpp"
+#include "opencv/cv.h"
 #include "gtest/gtest.h"
 #include <algorithm>
 #include <limits>

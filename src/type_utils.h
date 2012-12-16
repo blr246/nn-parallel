@@ -1,9 +1,8 @@
 #ifndef SRC_TYPE_UTILS_H
 #define SRC_TYPE_UTILS_H
 #include "opencv/cv.h"
-#include "opencv/cv.hpp"
-#include "opencv/cxtypes.h"
-#include "opencv/cxmat.hpp"
+#include <ostream>
+#include <iomanip>
 
 template <typename T>
 struct MatTypeWrapper
@@ -25,7 +24,7 @@ std::ostream& operator<<(std::ostream& stream, const MatTypeWrapper<T>& matTyped
     stream << "[ ";
     for (int c = 0; c < mat.cols; ++c, ++v)
     {
-      stream << *v << " ";
+      stream << std::scientific << std::setprecision(4) << *v << " ";
     }
     stream << "]\n";
   }

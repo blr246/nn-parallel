@@ -3,7 +3,6 @@
 #include "omp_lock.h"
 
 #include "cv.h"
-#include "cxmat.hpp"
 #include <vector>
 #include <omp.h>
 
@@ -136,7 +135,8 @@ struct CvMatPoolInitailizer
     CreateCvMatPtr();
   }
 };
-CvMatPoolInitailizer g_cvMatPoolInitializer;
+//CvMatPoolInitailizer g_cvMatPoolInitializer;
+extern CvMatPoolInitailizer g_cvMatPoolInitializer;
 }
 
 } // end ns nn

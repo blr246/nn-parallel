@@ -2,8 +2,6 @@
 #define SRC_IDX_CV_H
 #include "type_utils.h"
 #include "opencv/cv.h"
-#include "opencv/cv.hpp"
-#include "opencv/cxmat.hpp"
 #include <string>
 
 namespace blr
