@@ -135,7 +135,7 @@ struct CvMatPoolInitailizer
     CreateCvMatPtr();
   }
 };
-//CvMatPoolInitailizer g_cvMatPoolInitializer;
+CvMatPoolInitailizer g_cvMatPoolInitializer;
 extern CvMatPoolInitailizer g_cvMatPoolInitializer;
 }
 

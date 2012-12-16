@@ -480,7 +480,7 @@ void ComputeDatasetLossParallel(const Dataset& dataset, std::vector<NNType>* net
     ScopedDropoutDisabler<NNType> disableDropout(&nn);
     NLLCriterion::DatasetLoss(nn, data.first, data.second, &loss, &errors);
   }
-  *loss = std::accumulate(lossPerThread.begin(), lossPerThread.end(), 0);
+  *loss = std::accumulate(lossPerThread.begin(), lossPerThread.end(), 0.0);
   *errors = std::accumulate(errorsPerThread.begin(), errorsPerThread.end(), 0);
 }
 

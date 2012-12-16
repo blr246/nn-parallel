@@ -32,6 +32,7 @@ public:
   enum { DropoutProbabilityHidden = DropoutProbabilityHidden_, };
 
   DualLayerNNSoftmax();
+  DualLayerNNSoftmax(const DualLayerNNSoftmax& rhs);
 
   //  v INPUT (~20% dropout, Hinton et. al.)
   typedef Passthrough<NumInputs, NumericType> Layer0;
@@ -80,6 +81,8 @@ public:
   CvMatPtr GetWPtr() const;
 
 private:
+  DualLayerNNSoftmax& operator=(const DualLayerNNSoftmax&);
+
   void UpdatePartitions();
 
   /// <summary>Mask to perform dropout when enabled.</summary>
@@ -94,11 +97,11 @@ private:
   cv::Mat dLdX;
 
 #if !defined(NDEBUG)
-  void* dataPtrs[4];
-  void* dataPartitonPtrs[4][NumSublayers];
+  unsigned char* dataPtrs[4];
+  unsigned char* dataPartitonPtrs[4 * NumSublayers];
 
   void AssertDataPointersValid() const;
-  void CollectDataPointers(void* main[], void* partitions[]) const;
+  void CollectDataPointers(unsigned char* main[], unsigned char* partitions[]) const;
 #endif
 
   mutable cv::Mat yPartitions[NumSublayers];
@@ -135,7 +138,39 @@ DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   dropoutPartitions[2] = dropoutMask.rowRange(0, Layer2b::NumOutputs);
   DETECT_NUMERICAL_ERRORS(*WPtr);
 #if !defined(NDEBUG)
-  CollectDataPointers(&dataPtrs[0], dataPartitonPtrs[0]);
+  CollectDataPointers(dataPtrs, dataPartitonPtrs);
+#endif
+}
+
+template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
+          int DropoutProbabilityInput_, int DropoutProbabilityHidden_, typename NumericType_>
+DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
+                   DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
+::DualLayerNNSoftmax(const DualLayerNNSoftmax& rhs)
+: dropoutMask(),
+  Y(),
+  WPtr(CreateCvMatPtr()),
+  dLdW(),
+  dLdX(),
+  yPartitions(),
+  wPartitions(),
+  dwPartitions(),
+  dxPartitions(),
+  dropoutEnabled(rhs.dropoutEnabled)
+{
+  // Copy over.
+  rhs.dropoutMask.copyTo(dropoutMask);
+  rhs.Y.copyTo(Y);
+  rhs.WPtr->copyTo(*WPtr);
+  rhs.dLdW.copyTo(dLdW);
+  rhs.dLdX.copyTo(dLdX);
+  SetWPtr(WPtr);
+  dropoutPartitions[0] = dropoutMask.rowRange(0, Layer0::NumOutputs);
+  dropoutPartitions[1] = dropoutMask.rowRange(0, Layer1b::NumOutputs);
+  dropoutPartitions[2] = dropoutMask.rowRange(0, Layer2b::NumOutputs);
+  DETECT_NUMERICAL_ERRORS(*WPtr);
+#if !defined(NDEBUG)
+  CollectDataPointers(dataPtrs, dataPartitonPtrs);
 #endif
 }
 
@@ -448,9 +483,9 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
                         DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
 ::AssertDataPointersValid() const
 {
-  void* nowDataPtrs[4];
-  void* nowDataPartitonPtrs[2][NumSublayers];
-  CollectDataPointers(&nowDataPtrs[0], nowDataPartitonPtrs[0]);
+  unsigned char* nowDataPtrs[4];
+  unsigned char* nowDataPartitonPtrs[4 * NumSublayers];
+  CollectDataPointers(nowDataPtrs, nowDataPartitonPtrs);
   assert(0 == std::memcmp(nowDataPtrs, dataPtrs, sizeof(nowDataPtrs)) &&
          0 == std::memcmp(nowDataPartitonPtrs, dataPartitonPtrs, sizeof(nowDataPartitonPtrs)));
 }
@@ -460,16 +495,19 @@ template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
 inline
 void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
                         DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
-::CollectDataPointers(void* main[], void* partitions[]) const
+::CollectDataPointers(unsigned char* main[], unsigned char* partitions[]) const
 {
   main[0] = dropoutMask.data;
   main[1] = Y.data;
   main[2] = dLdW.data;
   main[3] = dLdX.data;
-  memset(partitions[0], 0, sizeof(partitions[0]));
   for (int i = 0; i < NumDropoutLayers; ++i)
   {
     partitions[0*NumSublayers + i] = dropoutPartitions[i].data;
+  }
+  for (int i = NumDropoutLayers; i < NumSublayers; ++i)
+  {
+    partitions[0*NumSublayers + i] = 0;
   }
   for (int i = 0; i < NumSublayers; ++i)
   {

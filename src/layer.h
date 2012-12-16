@@ -31,7 +31,6 @@
                 << "Detected numerical issue "                                                    \
                    "||" << #cvMat << "||^2 = " << __detect_numerical_errors_norm_sq << ", "       \
                    "SUM(" << #cvMat << ") = " << __detect_numerical_errors_sum << std::endl;      \
-      ssMsg << #cvMat << " = " << MatTypeWrapper<float>((cvMat)) << "\n";                         \
       std::cout << ssMsg.str(); std::cout.flush();                                                \
     }                                                                                             \
   }
