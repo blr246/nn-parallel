@@ -44,11 +44,13 @@ namespace nn
 {
 
 // Numeric test function from http://www.devx.com/tips/Tip/42853.
-inline int my_isnan(double x)
+inline
+int my_isnan(double x)
 {
   return x != x;
 }
-inline int my_isinf(double x)
+inline
+int my_isinf(double x)
 {
   if ((x == x) && ((x - x) != 0.0))
   {
@@ -58,11 +60,6 @@ inline int my_isinf(double x)
   {
     return 0;
   }
-}
-
-std::ostream& operator<<(std::ostream& stream, const cv::Size& size)
-{
-  return stream << "(" << size.height << "," << size.width << ")";
 }
 
 template <typename LayerType_>

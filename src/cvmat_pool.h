@@ -44,14 +44,26 @@ private:
   std::vector<cv::Mat*> myLittleMats;
 };
 
-CvMatPool
-::ScopedLock::ScopedLock(CvMatPool* pool_)
+namespace detail
+{
+struct CvMatPoolInitailizer
+{
+  CvMatPoolInitailizer();
+};
+extern CvMatPoolInitailizer g_cvMatPoolInitializer;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Inline definitions.
+////////////////////////////////////////////////////////////////////////////////
+inline
+CvMatPool::ScopedLock::ScopedLock(CvMatPool* pool_)
 : pool(pool_),
   lock(&pool->lock)
 {}
 
-CvMatPool
-::ScopedLock::~ScopedLock()
+inline
+CvMatPool::ScopedLock::~ScopedLock()
 {
   if (pool)
   {
@@ -59,8 +71,8 @@ CvMatPool
   }
 }
 
-std::vector<cv::Mat*>* CvMatPool
-::ScopedLock::GetItems() const
+inline
+std::vector<cv::Mat*>* CvMatPool::ScopedLock::GetItems() const
 {
   if (pool)
   {
@@ -72,35 +84,22 @@ std::vector<cv::Mat*>* CvMatPool
   }
 }
 
-void CvMatPool
-::ScopedLock::Release() const
+inline
+void CvMatPool::ScopedLock::Release() const
 {
   assert(lock.Acquired());
   lock.Unlock();
   pool = NULL;
 }
 
-CvMatPool::CvMatPool()
-: lock(),
-  myLittleMats()
-{}
-
-CvMatPool::~CvMatPool()
-{
-  // These better be released.
-  const size_t numMats = myLittleMats.size();
-  for (size_t i = 0; i < numMats; ++i)
-  {
-    delete myLittleMats[i];
-  }
-}
-
+inline
 CvMatPool* GetCvMatPool()
 {
   static CvMatPool g_cvMatPool;
   return &g_cvMatPool;
 }
 
+inline
 CvMatPtr CreateCvMatPtr()
 {
   CvMatPool::ScopedLock lock(GetCvMatPool());
@@ -118,25 +117,12 @@ CvMatPtr CreateCvMatPtr()
   }
 }
 
+inline
 void DestroyCvMat(cv::Mat* obj)
 {
   CvMatPool::ScopedLock lock(GetCvMatPool());
   std::vector<cv::Mat*>* items = lock.GetItems();
   items->push_back(obj);
-}
-
-namespace detail
-{
-struct CvMatPoolInitailizer
-{
-  CvMatPoolInitailizer()
-  {
-    // Get things cooking.
-    CreateCvMatPtr();
-  }
-};
-CvMatPoolInitailizer g_cvMatPoolInitializer;
-extern CvMatPoolInitailizer g_cvMatPoolInitializer;
 }
 
 } // end ns nn

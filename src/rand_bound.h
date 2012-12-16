@@ -12,6 +12,7 @@ namespace math
 /// <summary> Partition consecutive intervals of size bound mapped to the
 ///   numbers [0, bound - 1].
 /// </summary>
+inline
 int RandBound(const int bound)
 {
   assert(bound <= RAND_MAX);
@@ -30,31 +31,16 @@ int RandBound(const int bound)
 /// </summary>
 struct RandBoundGenerator
 {
-  RandBoundGenerator(const int bound_)
-  : bound(bound_),
-    factor(((RAND_MAX - bound) / bound) + 1),
-    limit(factor * bound)
-  {
-    assert(bound <= RAND_MAX);
-  }
-
-  inline int operator()() const
-  {
-    int r;
-    do
-    {
-      r = rand();
-    } while (r >= limit);
-    return r / factor;
-  }
-
+  RandBoundGenerator(const int bound_);
+  int operator()() const;
   int bound;
   int factor;
   int limit;
 };
 
 template <typename NumericType>
-inline NumericType RandUniform()
+inline
+NumericType RandUniform()
 {
   static RandBoundGenerator s_rand(RAND_MAX);
   return static_cast<NumericType>(s_rand()) /
@@ -71,6 +57,7 @@ inline NumericType RandUniform()
 ///       NY, USA.
 ///   </para>
 /// </remarks>
+inline
 double RatioOfUniforms(const double mu, const double sig)
 {
   // Uses a squeeze on the cartesion plot of standard distribution region
@@ -102,6 +89,29 @@ struct RatioUniformGenerator
   double sig;
 };
 
+////////////////////////////////////////////////////////////////////////////////
+// Inline definitions.
+////////////////////////////////////////////////////////////////////////////////
+inline
+RandBoundGenerator::RandBoundGenerator(const int bound_)
+: bound(bound_),
+  factor(((RAND_MAX - bound) / bound) + 1),
+  limit(factor * bound)
+{
+  assert(bound <= RAND_MAX);
+}
+
+inline
+int RandBoundGenerator::operator()() const
+{
+  int r;
+  do
+  {
+    r = rand();
+  } while (r >= limit);
+  return r / factor;
+}
+
 inline
 RatioUniformGenerator::RatioUniformGenerator(double mu_, double sig_)
     : mu(mu_), sig(sig_)
@@ -112,6 +122,7 @@ double RatioUniformGenerator::operator()() const
 {
   return RatioOfUniforms(mu, sig);
 }
+
 
 } // end ns math
 using namespace math;

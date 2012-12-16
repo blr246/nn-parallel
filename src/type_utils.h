@@ -31,6 +31,12 @@ std::ostream& operator<<(std::ostream& stream, const MatTypeWrapper<T>& matTyped
   return stream.flush();
 }
 
+inline
+std::ostream& operator<<(std::ostream& stream, const cv::Size& size)
+{
+  return stream << "(" << size.height << "," << size.width << ")";
+}
+
 namespace blr
 {
 namespace nn

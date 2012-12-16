@@ -6,7 +6,9 @@ file(GLOB HEADERS "*.h" "*.hpp")
 #   nn_core
 project(nn_parallel_core)
 set(SRCS
+    cvmat_pool.cpp
     idx_cv.cpp
+    minibatch_trainer.cpp
     ${HEADERS}
     )
 add_library(nn_parallel_core STATIC ${SRCS} ${HEADERS})
@@ -20,13 +22,12 @@ endif(WIN32)
 
 project(nn_parallel)
 set(SRCS
-    idx_cv.cpp
-    neural_network.cpp
+    main.cpp
     ${HEADERS}
     )
 
 add_executable(nn_parallel ${SRCS})
-target_link_libraries(nn_parallel ${OpenCV_LIBS})
+target_link_libraries(nn_parallel nn_parallel_core ${OpenCV_LIBS})
 
 if(WIN32)
   # Set max warning level, disable c99 initialization warning,

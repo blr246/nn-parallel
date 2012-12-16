@@ -39,18 +39,23 @@ private:
   omp_lock_t lock;
 };
 
+////////////////////////////////////////////////////////////////////////////////
+// Inline definitions.
+////////////////////////////////////////////////////////////////////////////////
+inline
 OmpLock::OmpLock()
 {
   omp_init_lock(&lock);
 }
 
+inline
 OmpLock::~OmpLock()
 {
   omp_destroy_lock(&lock);
 }
 
-OmpLock
-::ScopedLock::ScopedLock(OmpLock* lock_, bool tryAcquire)
+inline
+OmpLock::ScopedLock::ScopedLock(OmpLock* lock_, bool tryAcquire)
 : acquired(true),
   lock(lock_)
 {
@@ -64,8 +69,8 @@ OmpLock
   }
 }
 
-OmpLock
-::ScopedLock::~ScopedLock()
+inline
+OmpLock::ScopedLock::~ScopedLock()
 {
   if (acquired)
   {
@@ -73,24 +78,24 @@ OmpLock
   }
 }
 
-void OmpLock
-::ScopedLock::Unlock() const
+inline
+void OmpLock::ScopedLock::Unlock() const
 {
   assert(acquired);
   omp_unset_lock(&lock->lock);
   acquired = false;
 }
 
-void OmpLock
-::ScopedLock::Lock() const
+inline
+void OmpLock::ScopedLock::Lock() const
 {
   assert(!acquired);
   omp_set_lock(&lock->lock);
   acquired = true;
 }
 
-bool OmpLock
-::ScopedLock::Acquired() const
+inline
+bool OmpLock::ScopedLock::Acquired() const
 {
   return acquired;
 }

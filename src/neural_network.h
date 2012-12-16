@@ -1,4 +1,5 @@
 #ifndef SRC_NEURAL_NEWTORK_H
+#define SRC_NEURAL_NEWTORK_H
 #include "layer.h"
 #include "rand_bound.h"
 #include "cvmat_pool.h"
@@ -14,8 +15,6 @@ namespace blr
 {
 namespace nn
 {
-
-typedef std::pair<cv::Mat, cv::Mat> Dataset;
 
 template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
           int DropoutProbabilityInput_ = 0, int DropoutProbabilityHidden_ = 0,
@@ -41,7 +40,7 @@ public:
   typedef Tanh<NumHiddenUnits, NumericType> Layer1b;
   // vv Linear + Tahn (~50% dropout, Honton et. al.)
   typedef Linear<NumHiddenUnits, NumHiddenUnits, NumericType> Layer2a;
-//  typedef Tanh<NumHiddenUnits, NumericType> Layer2b;
+  typedef Tanh<NumHiddenUnits, NumericType> Layer2b;
   // vv Softmax
   typedef Linear<NumHiddenUnits, NumClasses, NumericType> Layer3a;
   typedef SoftMax<NumClasses, NumericType> Layer3b;
@@ -52,7 +51,7 @@ public:
     SL_Layer1a, 
     SL_Layer1b, 
     SL_Layer2a, 
-//    SL_Layer2b, 
+    SL_Layer2b, 
     SL_Layer3a, 
     SL_Layer3b, 
     NumSublayers,
@@ -60,15 +59,15 @@ public:
 
   enum { NumParameters = Layer0::NumParameters +
                          Layer1a::NumParameters + Layer1b::NumParameters +
-                         Layer2a::NumParameters + //Layer2b::NumParameters +
+                         Layer2a::NumParameters + Layer2b::NumParameters +
                          Layer3a::NumParameters + Layer3b::NumParameters, };
   enum { NumInternalOutputs = Layer0::NumOutputs +
                               Layer1a::NumOutputs + Layer1b::NumOutputs +
-                              Layer2a::NumOutputs + //Layer2b::NumOutputs +
+                              Layer2a::NumOutputs + Layer2b::NumOutputs +
                               Layer3a::NumOutputs + Layer3b::NumOutputs, };
   enum { NumInternalInputs = Layer0::NumInputs +
                              Layer1a::NumInputs + Layer1b::NumInputs +
-                             Layer2a::NumInputs + //Layer2b::NumInputs +
+                             Layer2a::NumInputs + Layer2b::NumInputs +
                              Layer3a::NumInputs + Layer3b::NumInputs, };
   enum { NumDropoutLayers = 3, };
   enum { NumDropoutParameters = Layer0::NumOutputs +
@@ -106,6 +105,9 @@ private:
   cv::Mat dLdX;
 
 #if !defined(NDEBUG)
+  enum { CalledForward, CalledBackward, };
+  mutable int lastCallState;
+
   enum { NumPersistentStorage = 4, };
   unsigned char* dataPtrs[NumPersistentStorage];
   unsigned char* dataPartitonPtrs[NumPersistentStorage * NumSublayers];
@@ -123,6 +125,29 @@ private:
   bool dropoutEnabled;
 };
 
+template <typename NNType>
+struct ScopedDropoutEnabler
+{
+  ScopedDropoutEnabler(NNType* nn_);
+  ~ScopedDropoutEnabler();
+  NNType* nn;
+  bool wasEnabled;
+};
+
+template <typename NNType>
+struct ScopedDropoutDisabler
+{
+  ScopedDropoutDisabler(NNType* nn_);
+  ~ScopedDropoutDisabler();
+  NNType* nn;
+  bool wasEnabled;
+};
+
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+// Inline definitions.
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
 template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
           int DropoutProbabilityInput_, int DropoutProbabilityHidden_, typename NumericType_>
 DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
@@ -133,6 +158,11 @@ DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   WPtr(CreateCvMatPtr()),
   dLdW(NumParameters, 1, CvType),
   dLdX(NumInternalInputs, 1, CvType),
+#if !defined(NDEBUG)
+  lastCallState(CalledBackward),
+  dataPtrs(),
+  dataPartitonPtrs(),
+#endif
   yPartitions(),
   wPartitions(),
   dwPartitions(),
@@ -160,6 +190,11 @@ DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   WPtr(CreateCvMatPtr()),
   dLdW(),
   dLdX(),
+#if !defined(NDEBUG)
+  lastCallState(rhs.lastCallState),
+  dataPtrs(),
+  dataPartitonPtrs(),
+#endif
   yPartitions(),
   wPartitions(),
   dwPartitions(),
@@ -226,10 +261,10 @@ const cv::Mat* DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
       dropoutEnabled, dropoutPartitions[2], yPartitions + layerIdx);
   ++yPrev; ++layerIdx;
-//  Layer2b::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
-//  ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
-//      dropoutEnabled, dropoutPartitions[2], yPartitions + layerIdx);
-//  ++yPrev; ++layerIdx;
+  Layer2b::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
+  ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
+      dropoutEnabled, dropoutPartitions[2], yPartitions + layerIdx);
+  ++yPrev; ++layerIdx;
   Layer3a::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
   ++yPrev; ++layerIdx;
   Layer3b::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
@@ -237,6 +272,7 @@ const cv::Mat* DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
 
 #if !defined(NDEBUG)
   AssertDataPointersValid();
+  lastCallState = CalledForward;
 #endif
 
   return yPrev;
@@ -289,8 +325,8 @@ const cv::Mat* DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
                           dwPartitions + NumSublayers - 2, dxPartitions + NumSublayers - 2);
   Layer3a::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
   bpIter.Next();
-//  Layer2b::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
-//  bpIter.Next();
+  Layer2b::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
+  bpIter.Next();
   Layer2a::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
   bpIter.Next();
   Layer1b::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
@@ -298,6 +334,8 @@ const cv::Mat* DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   Layer1a::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
 
 #if !defined(NDEBUG)
+  assert(CalledForward == lastCallState);
+  lastCallState = CalledBackward;
   AssertDataPointersValid();
 #endif
 
@@ -370,7 +408,7 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   Layer1a::TruncateL2(maxNorm, WPtr);
   Layer1b::TruncateL2(maxNorm, WPtr);
   Layer2a::TruncateL2(maxNorm, WPtr);
-//  Layer2b::TruncateL2(maxNorm, WPtr);
+  Layer2b::TruncateL2(maxNorm, WPtr);
   Layer3a::TruncateL2(maxNorm, WPtr);
   Layer3b::TruncateL2(maxNorm, WPtr);
 #if !defined(NDEBUG)
@@ -486,8 +524,8 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   ++i;
   partitionIter.Next<Layer2a>(wPartitions + i, yPartitions + i, dwPartitions + i, dxPartitions + i);
   ++i;
-//  partitionIter.Next<Layer2b>(wPartitions + i, yPartitions + i, dwPartitions + i, dxPartitions + i);
-//  ++i;
+  partitionIter.Next<Layer2b>(wPartitions + i, yPartitions + i, dwPartitions + i, dxPartitions + i);
+  ++i;
   partitionIter.Next<Layer3a>(wPartitions + i, yPartitions + i, dwPartitions + i, dxPartitions + i);
   ++i;
   partitionIter.Next<Layer3b>(wPartitions + i, yPartitions + i, dwPartitions + i, dxPartitions + i);
@@ -547,44 +585,38 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
 #endif
 
 template <typename NNType>
-struct ScopedDropoutEnabler
+ScopedDropoutEnabler<NNType>::ScopedDropoutEnabler(NNType* nn_)
+: nn(nn_),
+  wasEnabled(nn->DropoutEnabled())
 {
-  ScopedDropoutEnabler(NNType* nn_)
-    : nn(nn_),
-      wasEnabled(nn->DropoutEnabled())
-  {
-    nn->EnableDropout();
-  }
-  ~ScopedDropoutEnabler()
-  {
-    if (!wasEnabled)
-    {
-      nn->DisableDropout();
-    }
-  }
-  NNType* nn;
-  bool wasEnabled;
-};
+  nn->EnableDropout();
+}
 
 template <typename NNType>
-struct ScopedDropoutDisabler
+ScopedDropoutEnabler<NNType>::~ScopedDropoutEnabler()
 {
-  ScopedDropoutDisabler(NNType* nn_)
-    : nn(nn_),
-      wasEnabled(nn->DropoutEnabled())
+  if (!wasEnabled)
   {
     nn->DisableDropout();
   }
-  ~ScopedDropoutDisabler()
+}
+
+template <typename NNType>
+ScopedDropoutDisabler<NNType>::ScopedDropoutDisabler(NNType* nn_)
+: nn(nn_),
+  wasEnabled(nn->DropoutEnabled())
+{
+  nn->DisableDropout();
+}
+
+template <typename NNType>
+ScopedDropoutDisabler<NNType>::~ScopedDropoutDisabler()
+{
+  if (wasEnabled)
   {
-    if (wasEnabled)
-    {
-      nn->EnableDropout();
-    }
+    nn->EnableDropout();
   }
-  NNType* nn;
-  bool wasEnabled;
-};
+}
 
 } // end ns nn
 using namespace nn;
