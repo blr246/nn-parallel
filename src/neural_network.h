@@ -47,7 +47,16 @@ public:
   typedef SoftMax<NumClasses, NumericType> Layer3b;
   //  v OUTPUT
 
-  enum { NumSublayers = 5, /*7,*/ };
+  enum {
+    SL_Layer0, 
+    SL_Layer1a, 
+    SL_Layer1b, 
+    SL_Layer2a, 
+//    SL_Layer2b, 
+    SL_Layer3a, 
+    SL_Layer3b, 
+    NumSublayers,
+  };
 
   enum { NumParameters = Layer0::NumParameters +
                          Layer1a::NumParameters + Layer1b::NumParameters +
@@ -131,16 +140,14 @@ DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   dropoutEnabled(false)
 {
   WPtr->create(NumParameters, 1, CvType);
-  SetWPtr(WPtr);
-  Reset();
-  RefreshDropoutMask();
-  dropoutPartitions[0] = dropoutMask.rowRange(0, Layer0::NumOutputs);
-  dropoutPartitions[1] = dropoutMask.rowRange(0, Layer1a::NumOutputs);
-  dropoutPartitions[2] = dropoutMask.rowRange(0, Layer2a::NumOutputs);
-  DETECT_NUMERICAL_ERRORS(*WPtr);
+  UpdatePartitions();
 #if !defined(NDEBUG)
   CollectDataPointers(dataPtrs, dataPartitonPtrs);
 #endif
+  SetWPtr(WPtr);
+  Reset();
+  RefreshDropoutMask();
+  DETECT_NUMERICAL_ERRORS(*WPtr);
 }
 
 template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
@@ -165,14 +172,13 @@ DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   rhs.WPtr->copyTo(*WPtr);
   rhs.dLdW.copyTo(dLdW);
   rhs.dLdX.copyTo(dLdX);
-  SetWPtr(WPtr);
-  dropoutPartitions[0] = dropoutMask.rowRange(0, Layer0::NumOutputs);
-  dropoutPartitions[1] = dropoutMask.rowRange(0, Layer1a::NumOutputs);
-  dropoutPartitions[2] = dropoutMask.rowRange(0, Layer2a::NumOutputs);
-  DETECT_NUMERICAL_ERRORS(*WPtr);
+  UpdatePartitions();
 #if !defined(NDEBUG)
   CollectDataPointers(dataPtrs, dataPartitonPtrs);
 #endif
+  SetWPtr(WPtr);
+  Reset();
+  DETECT_NUMERICAL_ERRORS(*WPtr);
 }
 
 namespace detail
@@ -348,6 +354,9 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
         static_cast<NumericType>((RandBound(100) < dropoutProbability) ? 1 : 0);
     }
   }
+#if !defined(NDEBUG)
+  AssertDataPointersValid();
+#endif
 }
 
 template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
@@ -364,6 +373,9 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
 //  Layer2b::TruncateL2(maxNorm, WPtr);
   Layer3a::TruncateL2(maxNorm, WPtr);
   Layer3b::TruncateL2(maxNorm, WPtr);
+#if !defined(NDEBUG)
+  AssertDataPointersValid();
+#endif
 }
 
 template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
@@ -377,6 +389,9 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   //   w ~ N(0, 0.01)
   std::generate(WPtr->begin<NumericType>(), WPtr->end<NumericType>(),
                 RatioUniformGenerator(0, 0.01));
+#if !defined(NDEBUG)
+  AssertDataPointersValid();
+#endif
 }
 
 template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
@@ -391,6 +406,9 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   UpdatePartitions();
   const cv::Mat* W = WPtr; (void)W;
   DETECT_NUMERICAL_ERRORS(*W);
+#if !defined(NDEBUG)
+  AssertDataPointersValid();
+#endif
 }
 
 template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
@@ -474,6 +492,11 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   ++i;
   partitionIter.Next<Layer3b>(wPartitions + i, yPartitions + i, dwPartitions + i, dxPartitions + i);
   ++i;
+
+  dropoutPartitions[0] = dropoutMask.rowRange(0, Layer0::NumOutputs);
+  dropoutPartitions[1] = dropoutMask.rowRange(0, Layer1a::NumOutputs);
+  dropoutPartitions[2] = dropoutMask.rowRange(0, Layer2a::NumOutputs);
+
   assert(Y.rows == partitionIter.yIdx);
   assert(WPtr->rows == partitionIter.wIdx);
   assert(dLdW.rows == partitionIter.dwIdx);

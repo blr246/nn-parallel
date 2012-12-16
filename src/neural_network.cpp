@@ -34,8 +34,8 @@ struct WeightExponentialDecay
 };
 
 WeightExponentialDecay::WeightExponentialDecay()
-: eps0(0.001),
-//: eps0(10.0),
+//: eps0(0.001),
+: eps0(10.0),
   exp(0.998),
   rho0(0.5),
   rho1(0.99),
@@ -218,14 +218,14 @@ void UpdateDelegator::SubmitGradient(CvMatPtr update, NNType* nn)
       ScopedDropoutDisabler<NNType> disableDropout(nn);
       ssMsg.str("");
       ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
-            << "Computing train loss nn.W " << std::hex << static_cast<void*>(nn->GetWPtr()->data) << "\n";
+            << "Computing train loss nn.W "
+            << std::hex << static_cast<void*>(nn->GetWPtr()->data) << "\n";
       std::cout << ssMsg.str(); std::cout.flush();
-      NLLCriterion::DatasetLoss(*nn, dataTrain->first, dataTrain->second,
-                                &lossTrain, &errorsTrain);
+      NLLCriterion::DatasetLoss(*nn, dataTrain->first, dataTrain->second, &lossTrain, &errorsTrain);
       ssMsg.str("");
       ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
             << "Train loss for nn.W " << std::hex << static_cast<void*>(nn->GetWPtr()->data) << "\n"
-               "loss: " << lossTrain << ", errors: " << std::dec << errorsTrain << "\n";
+               "train loss: " << lossTrain << ", train errors: " << std::dec << errorsTrain << "\n";
       std::cout << ssMsg.str(); std::cout.flush();
     }
     // Compute test loss on data.
@@ -235,14 +235,14 @@ void UpdateDelegator::SubmitGradient(CvMatPtr update, NNType* nn)
       ScopedDropoutDisabler<NNType> disableDropout(nn);
       ssMsg.str("");
       ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
-            << "Computing test loss nn.W " << std::hex << static_cast<void*>(nn->GetWPtr()->data) << "\n";
+            << "Computing test loss nn.W "
+            << std::hex << static_cast<void*>(nn->GetWPtr()->data) << "\n";
       std::cout << ssMsg.str(); std::cout.flush();
-      NLLCriterion::DatasetLoss(*nn, dataTest->first, dataTest->second,
-                                &lossTest, &errorsTest);
+      NLLCriterion::DatasetLoss(*nn, dataTest->first, dataTest->second, &lossTest, &errorsTest);
       ssMsg.str("");
       ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
             << "Test loss for nn.W " << std::hex << static_cast<void*>(nn->GetWPtr()->data) << "\n"
-               "loss: " << lossTest << ", errors: " << std::dec << errorsTest << "\n";
+               "test loss: " << lossTest << ", test errors: " << std::dec << errorsTest << "\n";
       ssMsg << "Updated weights for all t < " << tNow << std::endl;
       std::cout << ssMsg.str(); std::cout.flush();
     }
@@ -586,9 +586,8 @@ int main(int argc, char** argv)
   std::cout << "CvType = " << CvType << std::endl;
   // Load data.
   std::cout << "Loading data..." << std::endl;
-  Dataset dataTrain;
-  Dataset dataTest;
   int errorCode = ERROR_NONE;
+  Dataset dataTrain;
   if (!IdxToCvMat(dataTrainPaths.first, CvType, MaxRows, &dataTrain.first) ||
       !IdxToCvMat(dataTrainPaths.second, CV_8U, MaxRows, &dataTrain.second) ||
       (dataTrain.first.rows != dataTrain.second.rows))
@@ -596,7 +595,9 @@ int main(int argc, char** argv)
     std::cerr << "Error loading training data" << std::endl;
     errorCode |= ERROR_BAD_TRAIN_DATA;
   }
-  std::cout << "Loaded " << dataTrain.first.rows << " training data points." << std::endl;
+  std::cout << "Loaded " << dataTrain.first.rows << " training data points "
+               "from file " << dataTrainPaths.first << "." << std::endl;
+  Dataset dataTest;
   if (!IdxToCvMat(dataTestPaths.first, CvType, MaxRows, &dataTest.first) ||
       !IdxToCvMat(dataTestPaths.second, CV_8U, MaxRows, &dataTest.second) ||
       (dataTest.first.rows != dataTest.second.rows))
@@ -604,7 +605,8 @@ int main(int argc, char** argv)
     std::cerr << "Error loading testing data" << std::endl;
     errorCode |= ERROR_BAD_TEST_DATA;
   }
-  std::cout << "Loaded " << dataTest.first.rows << " testing data points." << std::endl;
+  std::cout << "Loaded " << dataTest.first.rows << " testing data points "
+               "from file " << dataTestPaths.first << "." << std::endl;
   assert(dataTrain.first.type() == dataTest.first.type());
   if (dataTrain.first.cols != dataTest.first.cols)
   {

@@ -264,17 +264,19 @@ void Linear<NumInputs_, NumOutputs_, NumericType_>
   DETECT_NUMERICAL_ERRORS(M);
   DETECT_NUMERICAL_ERRORS(B);
 
-  // Check each row's norm.
+  // Check each row's norm (and his offset!).
   const double scaleNumerator = std::sqrt(maxNormSq);
   for (int i = 0; i < M.rows; ++i)
   {
     cv::Mat r = M.row(i);
+    cv::Mat b = B.row(i);
     DETECT_NUMERICAL_ERRORS(r);
-    const double normSq = r.dot(r);
+    const double normSq = r.dot(r) + b.dot(b);
     if (normSq > maxNormSq)
     {
       const NumericType scaleFactor = static_cast<NumericType>(scaleNumerator / std::sqrt(normSq));
       r *= scaleFactor;
+      b *= scaleFactor;
       std::stringstream ssMsg;
 //      ssMsg << "normSq = " << normSq << ", "
 //               "updated normSq = " << r.dot(r) << ", "
@@ -282,7 +284,7 @@ void Linear<NumInputs_, NumOutputs_, NumericType_>
 //      std::cout << ssMsg.str(); std::cout.flush();
     }
     DETECT_NUMERICAL_ERRORS(r);
-    if (r.dot(r) > (maxNormSq + 1e-2))
+    if ((r.dot(r) + b.dot(b)) > (maxNormSq + 1e-2))
     {
       std::stringstream ssMsg;
       ssMsg << "Whoa, bro, r.dot(r) " << std::dec << std::setprecision(4)
@@ -290,19 +292,6 @@ void Linear<NumInputs_, NumOutputs_, NumericType_>
       std::cout << ssMsg.str(); std::cout.flush();
     }
     assert(((maxNormSq + 1e-2) - r.dot(r)) > 0);
-  }
-  const double normBSq = B.dot(B);
-  if (normBSq > maxNormSq)
-  {
-    const NumericType scaleFactor = static_cast<NumericType>(scaleNumerator / std::sqrt(normBSq));
-    B *= scaleFactor;
-    std::stringstream ssMsg;
-//    ssMsg << "normBSq = " << normBSq << ", "
-//              "updated normSq = " << B.dot(B) << ", "
-//              "l = " << maxNormSq << std::endl;
-//    std::cout << ssMsg.str(); std::cout.flush();
-    DETECT_NUMERICAL_ERRORS(B);
-    assert(((maxNormSq + 1e-2) - B.dot(B)) > 0);
   }
   DETECT_NUMERICAL_ERRORS(*W);
 }
