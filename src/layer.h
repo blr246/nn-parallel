@@ -86,7 +86,7 @@ public:
 
   static void Backward(const cv::Mat& X, const cv::Mat& W, const cv::Mat& Y,
                        const cv::Mat& dLdY, cv::Mat* dLdW, cv::Mat* dLdX);
-  static void TruncateL2(NumericType maxNormSq, cv::Mat* W);
+  static double ComputeTruncateL2Factor(const cv::Mat& W, NumericType maxNormSq);
 };
 
 template <int NumInputs_, int NumOutputs_, typename NumericType_ = double>
@@ -107,7 +107,7 @@ public:
 
   static void Backward(const cv::Mat& X, const cv::Mat& W, const cv::Mat& Y,
                        const cv::Mat& dLdY, cv::Mat* dLdW, cv::Mat* dLdX);
-  static void TruncateL2(NumericType maxNormSq, cv::Mat* W);
+  static double ComputeTruncateL2Factor(const cv::Mat& W, NumericType maxNormSq);
 };
 
 template <int NumInputs_, typename NumericType_ = double>
@@ -125,7 +125,7 @@ public:
 
   static void Backward(const cv::Mat& X, const cv::Mat& W, const cv::Mat& Y,
                        const cv::Mat& dLdY, cv::Mat* dLdW, cv::Mat* dLdX);
-  static void TruncateL2(NumericType maxNormSq, cv::Mat* W);
+  static double ComputeTruncateL2Factor(const cv::Mat& W, NumericType maxNormSq);
 };
 
 template <int NumClasses_, typename NumericType_ = double>
@@ -143,7 +143,7 @@ public:
 
   static void Backward(const cv::Mat& X, const cv::Mat& W, const cv::Mat& Y,
                        const cv::Mat& dLdY, cv::Mat* dLdW, cv::Mat* dLdX);
-  static void TruncateL2(NumericType maxNormSq, cv::Mat* W);
+  static double ComputeTruncateL2Factor(const cv::Mat& W, NumericType maxNormSq);
 };
 
 struct NLLCriterion
@@ -195,10 +195,12 @@ void Passthrough<NumInputs_, NumericType_>
 }
 
 template <int NumInputs_, typename NumericType_>
-inline
-void Passthrough<NumInputs_, NumericType_>
-::TruncateL2(NumericType /*maxNormSq*/, cv::Mat* /*W*/)
-{}
+inline 
+double Passthrough<NumInputs_, NumericType_>
+::ComputeTruncateL2Factor(const cv::Mat& /*W*/, NumericType /*maxNormSq*/)
+{
+  return 1;
+}
 
 template <int NumInputs_, int NumOutputs_, typename NumericType_>
 inline
@@ -251,46 +253,26 @@ void Linear<NumInputs_, NumOutputs_, NumericType_>
 }
 
 template <int NumInputs_, int NumOutputs_, typename NumericType_>
-inline
-void Linear<NumInputs_, NumOutputs_, NumericType_>
-::TruncateL2(NumericType maxNormSq, cv::Mat* W)
+double Linear<NumInputs_, NumOutputs_, NumericType_>
+::ComputeTruncateL2Factor(const cv::Mat& W, NumericType maxNormSq)
 {
-  cv::Mat M = W->rowRange(0, ParamsLinearMat).reshape(1, NumOutputs);
-  cv::Mat B = W->rowRange(ParamsLinearMat, NumParameters);
-  DETECT_NUMERICAL_ERRORS(*W);
-  DETECT_NUMERICAL_ERRORS(M);
-  DETECT_NUMERICAL_ERRORS(B);
-
+  cv::Mat M = W.rowRange(0, ParamsLinearMat).reshape(1, NumOutputs);
+  cv::Mat B = W.rowRange(ParamsLinearMat, NumParameters);
   // Check each row's norm (and his offset!).
   const double scaleNumerator = std::sqrt(maxNormSq);
+  double maxExceedRowNormSq = maxNormSq;
   for (int i = 0; i < M.rows; ++i)
   {
     cv::Mat r = M.row(i);
     cv::Mat b = B.row(i);
     DETECT_NUMERICAL_ERRORS(r);
-    const double normSq = r.dot(r) + b.dot(b);
-    if (normSq > maxNormSq)
-    {
-      const NumericType scaleFactor = static_cast<NumericType>(scaleNumerator / std::sqrt(normSq));
-      r *= scaleFactor;
-      b *= scaleFactor;
-      std::stringstream ssMsg;
-//      ssMsg << "normSq = " << normSq << ", "
-//               "updated normSq = " << r.dot(r) << ", "
-//               "l = " << maxNormSq << std::endl;
-//      std::cout << ssMsg.str(); std::cout.flush();
-    }
-    DETECT_NUMERICAL_ERRORS(r);
-    if ((r.dot(r) + b.dot(b)) > (maxNormSq + 1e-2))
-    {
-      std::stringstream ssMsg;
-      ssMsg << "Whoa, bro, r.dot(r) " << std::dec << std::setprecision(4)
-            << r.dot(r) << " > " << maxNormSq << " maxNormSq\n";
-      std::cout << ssMsg.str(); std::cout.flush();
-    }
-    assert(((maxNormSq + 1e-2) - r.dot(r)) > 0);
+    DETECT_NUMERICAL_ERRORS(b);
+    const double rowNormSq = r.dot(r) + b.dot(b);
+    maxExceedRowNormSq = std::max(rowNormSq, maxExceedRowNormSq);
+//    std::cout << "rowNormSq = " << rowNormSq << std::endl;
   }
-  DETECT_NUMERICAL_ERRORS(*W);
+//  std::cout << "maxExceedRowNormSq = " << maxExceedRowNormSq << std::endl;
+  return scaleNumerator / std::sqrt(maxExceedRowNormSq);
 }
 
 template <int NumInputs_, typename NumericType_>
@@ -335,9 +317,11 @@ void Tanh<NumInputs_, NumericType_>
 
 template <int NumInputs_, typename NumericType_>
 inline
-void Tanh<NumInputs_, NumericType_>
-::TruncateL2(NumericType /*maxNormSq*/, cv::Mat* /*W*/)
-{}
+double Tanh<NumInputs_, NumericType_>
+::ComputeTruncateL2Factor(const cv::Mat& /*W*/, NumericType /*maxNormSq*/)
+{
+  return 1;
+}
 
 template <int NumClasses_, typename NumericType_>
 inline
@@ -424,9 +408,11 @@ void SoftMax<NumClasses_, NumericType_>
 
 template <int NumClasses_, typename NumericType_>
 inline
-void SoftMax<NumClasses_, NumericType_>
-::TruncateL2(NumericType /*maxNormSq*/, cv::Mat* /*W*/)
-{}
+double SoftMax<NumClasses_, NumericType_>
+::ComputeTruncateL2Factor(const cv::Mat& /*W*/, NumericType /*maxNormSq*/)
+{
+  return 1;
+}
 
 template <typename NNType>
 const cv::Mat* NLLCriterion::

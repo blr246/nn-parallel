@@ -8,6 +8,7 @@ project(nn_parallel_core)
 set(SRCS
     cvmat_pool.cpp
     idx_cv.cpp
+    log.cpp
     minibatch_trainer.cpp
     ${HEADERS}
     )

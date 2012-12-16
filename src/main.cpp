@@ -2,6 +2,7 @@
 #include "neural_network.h"
 #include "idx_cv.h"
 #include "omp_lock.h"
+#include "timer.h"
 
 #include <algorithm>
 #include <functional>
@@ -100,12 +101,14 @@ int main(int argc, char** argv)
   enum { NumBatches = 100, };
   enum { BatchSize = 100, };
 #endif
-  enum { NumWarmStartEpochs = 1, };
-//  enum { NumWarmStartEpochs = NumBatches, };
-  typedef double NumericType;
+//  enum { NumWarmStartEpochs = 5, };
+  enum { NumWarmStartEpochs = NumBatches, };
+//  typedef double NumericType;
+  typedef float NumericType;
   enum { CvType = NumericTypeToCvType<NumericType>::CvType, };
   typedef DualLayerNNSoftmax<784, 10, 800, 20, 50, NumericType> NNType;
 //  typedef DualLayerNNSoftmax<784, 10, 800, 0, 0, NumericType> NNType;
+  std::stringstream ssMsg;
 
   // Parse args.
   typedef std::pair<std::string, std::string> PathPair;
@@ -113,7 +116,7 @@ int main(int argc, char** argv)
   {
     if (argc != (Args::Argv_Count + 1))
     {
-      std::cerr << "Error: invalid arguments\n" << std::endl;
+      std::cerr << "Error: invalid arguments\n";
       Args::Usage(*argv, std::cerr);
       return ERROR_BAD_ARGUMENTS;
     }
@@ -127,37 +130,47 @@ int main(int argc, char** argv)
   const PathPair dataTestPaths = std::make_pair(args.asList[Args::Argv_DataTestPoints],
                                                 args.asList[Args::Argv_DataTestLabels]);
 
-  std::cout << "Network architecture [I > H > H > O] is ["
-            << NNType::NumInputs << " -> " << NNType::NumHiddenUnits << " -> "
-            << NNType::NumHiddenUnits << " -> " << NNType::NumClasses << "]" << std::endl;
-  std::cout << "CvType = " << CvType << std::endl;
+  ssMsg.str("");
+  ssMsg << "Network architecture [I > H > H > O] is ["
+         << NNType::NumInputs << " -> " << NNType::NumHiddenUnits << " -> "
+         << NNType::NumHiddenUnits << " -> " << NNType::NumClasses << "]\n";
+  Log(ssMsg.str(), &std::cout);
+  ssMsg.str("");
+  ssMsg << "CvType = " << CvType << "\n";
+  Log(ssMsg.str(), &std::cout);
   // Load data.
-  std::cout << "Loading data..." << std::endl;
+  ssMsg.str("");
+  ssMsg << "Loading data...\n";
+  Log(ssMsg.str(), &std::cout);
   int errorCode = ERROR_NONE;
   Dataset dataTrain;
   if (!IdxToCvMat(dataTrainPaths.first, CvType, MaxRows, &dataTrain.first) ||
       !IdxToCvMat(dataTrainPaths.second, CV_8U, MaxRows, &dataTrain.second) ||
       (dataTrain.first.rows != dataTrain.second.rows))
   {
-    std::cerr << "Error loading training data" << std::endl;
+    std::cerr << "Error loading training data\n";
     errorCode |= ERROR_BAD_TRAIN_DATA;
   }
-  std::cout << "Loaded " << dataTrain.first.rows << " training data points "
-               "from file " << dataTrainPaths.first << "." << std::endl;
+  ssMsg.str("");
+  ssMsg << "Loaded " << dataTrain.first.rows << " training data points "
+           "from file " << dataTrainPaths.first << ".\n";
+  Log(ssMsg.str(), &std::cout);
   Dataset dataTest;
   if (!IdxToCvMat(dataTestPaths.first, CvType, MaxRows, &dataTest.first) ||
       !IdxToCvMat(dataTestPaths.second, CV_8U, MaxRows, &dataTest.second) ||
       (dataTest.first.rows != dataTest.second.rows))
   {
-    std::cerr << "Error loading testing data" << std::endl;
+    std::cerr << "Error loading testing data\n";
     errorCode |= ERROR_BAD_TEST_DATA;
   }
-  std::cout << "Loaded " << dataTest.first.rows << " testing data points "
-               "from file " << dataTestPaths.first << "." << std::endl;
+  ssMsg.str("");
+  ssMsg << "Loaded " << dataTest.first.rows << " testing data points "
+           "from file " << dataTestPaths.first << ".\n";
+  Log(ssMsg.str(), &std::cout);
   assert(dataTrain.first.type() == dataTest.first.type());
   if (dataTrain.first.cols != dataTest.first.cols)
   {
-    std::cerr << "Error: train/test input dims unmatched" << std::endl;
+    std::cerr << "Error: train/test input dims unmatched\n";
     errorCode |= ERROR_BAD_DATA_DIMS;
   }
   if (errorCode)
@@ -170,9 +183,13 @@ int main(int argc, char** argv)
 //  enum { ForceTestThreads = 32, };
 //  const int numProcessors = ForceTestThreads;
 //  omp_set_num_threads(ForceTestThreads);
-  std::cout << "Creating networks." << std::endl;
+  ssMsg.str("");
+  ssMsg << "Creating networks.\n";
+  Log(ssMsg.str(), &std::cout);
+  ssMsg.str("");
   std::vector<NNType> networks(numProcessors);
-  std::cout << "Created networks." << std::endl;
+  ssMsg << "Created networks.\n";
+  Log(ssMsg.str(), &std::cout);
   // There is only one update delegator for threadsafe updates.
   UpdateDelegator updateDelegator;
   updateDelegator.Initialize(&networks[0], &dataTrain, &dataTest);
@@ -195,56 +212,87 @@ int main(int argc, char** argv)
     double lossTrain;
     int errorsTrain;
     ComputeDatasetLossParallel(dataTrain, updateDelegator, &networks, &lossTrain, &errorsTrain);
-    std::cout << "TRAIN loss initial:\n"
-                 "loss: " << lossTrain << ", errors: " << std::dec << errorsTrain << std::endl;
+    ssMsg.str("");
+    ssMsg << "TRAIN loss initial:\n"
+             "loss: " << lossTrain << ", errors: " << std::dec << errorsTrain << "\n";
+    Log(ssMsg.str(), &std::cout);
     double lossTest;
     int errorsTest;
     ComputeDatasetLossParallel(dataTest, updateDelegator, &networks, &lossTest, &errorsTest);
-    std::cout << "TEST loss initial:\n"
-                 "loss: " << lossTest << ", errors: " << std::dec << errorsTest << std::endl;
+    ssMsg.str("");
+    ssMsg << "TEST loss initial:\n"
+             "loss: " << lossTest << ", errors: " << std::dec << errorsTest << "\n";
+    Log(ssMsg.str(), &std::cout);
   }
   // Run a few single-threaded epochs.
   for (int batchIdx = 0;  batchIdx < NumWarmStartEpochs; ++batchIdx)
   {
     MiniBatchTrainerType& trainer = miniBatchTrainers[0];
-    std::cout << "Warm start epoch " << (batchIdx + 1) << " of " << NumWarmStartEpochs << std::endl;
+    ssMsg.str("");
+    ssMsg << "Warm start epoch " << (batchIdx + 1) << " of " << NumWarmStartEpochs << "\n";
+    Log(ssMsg.str(), &std::cout);
     trainer.Run(batchIdx);
+    {
+      double lossTrain;
+      int errorsTrain;
+      ComputeDatasetLossParallel(dataTrain, updateDelegator, &networks, &lossTrain, &errorsTrain);
+      ssMsg.str("");
+      ssMsg << "TRAIN loss:\n"
+               "loss: " << lossTrain << ", errors: " << std::dec << errorsTrain << "\n";
+      Log(ssMsg.str(), &std::cout);
+      double lossTest;
+      int errorsTest;
+      ComputeDatasetLossParallel(dataTest, updateDelegator, &networks, &lossTest, &errorsTest);
+      ssMsg.str("");
+      ssMsg << "TEST loss:\n"
+               "loss: " << lossTest << ", errors: " << std::dec << errorsTest << "\n";
+      Log(ssMsg.str(), &std::cout);
+    }
   }
 //  {
 //    double lossTrain;
 //    int errorsTrain;
 //    ComputeDatasetLossParallel(dataTrain, updateDelegator, &networks, &lossTrain, &errorsTrain);
-//    std::cout << "TRAIN loss:\n"
-//                 "loss: " << lossTrain << ", errors: " << std::dec << errorsTrain << std::endl;
+//    ssMsg.str("");
+//    ssMsg << "TRAIN loss:\n"
+//             "loss: " << lossTrain << ", errors: " << std::dec << errorsTrain << "\n";
+//    Log(ssMsg.str(), &std::cout);
 //    double lossTest;
 //    int errorsTest;
 //    ComputeDatasetLossParallel(dataTest, updateDelegator, &networks, &lossTest, &errorsTest);
-//    std::cout << "TEST loss:\n"
-//                 "loss: " << lossTest << ", errors: " << std::dec << errorsTest << std::endl;
+//    ssMsg.str("");
+//    ssMsg << "TEST loss:\n"
+//             "loss: " << lossTest << ", errors: " << std::dec << errorsTest << "\n";
+//    Log(ssMsg.str(), &std::cout);
 //  }
   // Parallel pandemonium!
 #pragma omp parallel for schedule(dynamic, 1)
   for (int batchIdx = NumWarmStartEpochs; batchIdx < NumBatches; ++batchIdx)
   {
     const int whoAmI = omp_get_thread_num();
-//    std::cout << "Processor " << whoAmI << " got batch " << batchIdx << std::endl;
     MiniBatchTrainerType& trainer = miniBatchTrainers[whoAmI];
     trainer.Run(batchIdx);
   }
   // Do final weight update.
   updateDelegator.Flush(&networks[0]);
-  std::cout << "Computing loss after " << NumBatches << " training epochs..." << std::endl;
+  ssMsg.str("");
+  ssMsg << "Computing loss after " << NumBatches << " training epochs...\n";
+  Log(ssMsg.str(), &std::cout);
   {
     double lossTrain;
     int errorsTrain;
     ComputeDatasetLossParallel(dataTrain, updateDelegator, &networks, &lossTrain, &errorsTrain);
-    std::cout << "TRAIN loss:\n"
-                 "loss: " << lossTrain << ", errors: " << std::dec << errorsTrain << std::endl;
+    ssMsg.str("");
+    ssMsg << "TRAIN loss:\n"
+             "loss: " << lossTrain << ", errors: " << std::dec << errorsTrain << "\n";
+    Log(ssMsg.str(), &std::cout);
     double lossTest;
     int errorsTest;
     ComputeDatasetLossParallel(dataTest, updateDelegator, &networks, &lossTest, &errorsTest);
-    std::cout << "TEST loss:\n"
-                 "loss: " << lossTest << ", errors: " << std::dec << errorsTest << std::endl;
+    ssMsg.str("");
+    ssMsg << "TEST loss:\n"
+             "loss: " << lossTest << ", errors: " << std::dec << errorsTest << "\n";
+    Log(ssMsg.str(), &std::cout);
   }
   return 0;
 }

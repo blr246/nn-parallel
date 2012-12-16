@@ -1,6 +1,7 @@
 #ifndef SRC_NEURAL_NEWTORK_H
 #define SRC_NEURAL_NEWTORK_H
 #include "layer.h"
+#include "log.h"
 #include "rand_bound.h"
 #include "cvmat_pool.h"
 #include "type_utils.h"
@@ -403,13 +404,32 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
                         DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
 ::TruncateL2(const NumericType maxNorm)
 {
-  Layer0::TruncateL2(maxNorm, WPtr);
-  Layer1a::TruncateL2(maxNorm, WPtr);
-  Layer1b::TruncateL2(maxNorm, WPtr);
-  Layer2a::TruncateL2(maxNorm, WPtr);
-  Layer2b::TruncateL2(maxNorm, WPtr);
-  Layer3a::TruncateL2(maxNorm, WPtr);
-  Layer3b::TruncateL2(maxNorm, WPtr);
+  int layerIdx = 0;
+  double normFactor = 1.0;
+  normFactor = std::min(Layer0::ComputeTruncateL2Factor(wPartitions[layerIdx], maxNorm), normFactor);
+  ++layerIdx;
+  normFactor = std::min(Layer1a::ComputeTruncateL2Factor(wPartitions[layerIdx], maxNorm), normFactor);
+  ++layerIdx;                                                                          
+  normFactor = std::min(Layer1b::ComputeTruncateL2Factor(wPartitions[layerIdx], maxNorm), normFactor);
+  ++layerIdx;                                                                          
+  normFactor = std::min(Layer2a::ComputeTruncateL2Factor(wPartitions[layerIdx], maxNorm), normFactor);
+  ++layerIdx;                                                                          
+  normFactor = std::min(Layer2b::ComputeTruncateL2Factor(wPartitions[layerIdx], maxNorm), normFactor);
+  ++layerIdx;                                                                          
+  normFactor = std::min(Layer3a::ComputeTruncateL2Factor(wPartitions[layerIdx], maxNorm), normFactor);
+  ++layerIdx;                                                                          
+  normFactor = std::min(Layer3b::ComputeTruncateL2Factor(wPartitions[layerIdx], maxNorm), normFactor);
+  ++layerIdx;
+  assert(normFactor <= 1);
+  std::stringstream ssMsg;
+  ssMsg << "Scaling W by " << normFactor << "\n";
+  Log(ssMsg.str(), &std::cout);
+  if (normFactor < 1)
+  {
+    (*WPtr) *= normFactor;
+  }
+
+  DETECT_NUMERICAL_ERRORS(*WPtr);
 #if !defined(NDEBUG)
   AssertDataPointersValid();
 #endif
@@ -425,6 +445,7 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   // As per Hinton, et. al. http://arxiv.org/abs/1207.0580:
   //   w ~ N(0, 0.01)
   cv::randn(*WPtr, cv::Scalar::all(0), cv::Scalar::all(0.01));
+  std::cout << "*****************RESET************" << std::endl;
 }
 
 template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,

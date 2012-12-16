@@ -4,6 +4,7 @@
 #include "cvmat_pool.h"
 #include "type_utils.h"
 #include "rand_bound.h"
+#include "log.h"
 
 #include "opencv/cv.h"
 #include <algorithm>
@@ -17,8 +18,7 @@ namespace blr
 namespace nn
 {
 
-enum { MaxL2 = 15, };
-enum { HexAddrLabelColW = 60, };
+enum { MaxL2 = 1, };
 typedef std::pair<cv::Mat, cv::Mat> Dataset;
 
 /// <summary>Parallelizable neural network trainer.</summary>
@@ -185,10 +185,10 @@ void MiniBatchTrainer<NNType_, WeightUpdateType_>
   dwAccum->create(WPtr->size(), CvType);
   *dwAccum = cv::Scalar::all(0);
   // br - What is the best policy for dropout refresh?
-  nn->RefreshDropoutMask();
+//  nn->RefreshDropoutMask();
   for (int batchIdxJ = 0; batchIdxJ < batchSize; ++batchIdxJ, ++sampleIdx)
   {
-//    nn->RefreshDropoutMask();
+    nn->RefreshDropoutMask();
     sampleIdx %= dataTrainSize;
     const cv::Mat xi = dataTrain->first.row(sampleIdx).t();
     const cv::Mat yi = dataTrain->second.row(sampleIdx);
@@ -259,21 +259,15 @@ void UpdateDelegator::SubmitGradient(CvMatPtr update, NNType* nn)
     updates.Swap(&myUpdates);
     myUpdates.push_back(update);
     CvMatPtr newWPtr = ProcessUpdates(myUpdates, nn);
-    cv::Mat* newW = newWPtr; (void)newW;
-    DETECT_NUMERICAL_ERRORS(*newW);
     // Lock again for update to W.
     OmpLock::ScopedLock myLockW(&latestWLock);
     latestWPtr = newWPtr;
     // Make busy unlocked first so we have order ABAB.
-    const int tNow = t;
     myBusyLock.Unlock();
-    std::stringstream ssMsg;
-    ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
-          << "Set latest W " << std::hex << static_cast<void*>(latestWPtr->data) << "\n";
-    std::cout << ssMsg.str(); std::cout.flush();
-    const cv::Mat* latestW = latestWPtr; (void)latestW;
     myLockW.Unlock();
-    DETECT_NUMERICAL_ERRORS(*latestW);
+    LogMatrix(*newWPtr, "Set latest W", &std::cout);
+
+    DETECT_NUMERICAL_ERRORS(*newWPtr);
 
 //    {
 //      ScopedDropoutDisabler<NNType> disableDropout(nn);
@@ -309,10 +303,7 @@ void UpdateDelegator::SubmitGradient(CvMatPtr update, NNType* nn)
   else
   {
     // Push update, grab newest W, load, and go.
-    std::stringstream ssMsg;
-    ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
-          << "Pushing gradient " << std::hex << static_cast<void*>(update->data) << "\n";
-    std::cout << ssMsg.str(); std::cout.flush();
+    LogMatrix(*update, "Pushing gradient", &std::cout);
     updates.Push(update);
   }
 }
@@ -324,16 +315,14 @@ void UpdateDelegator::Flush(NNType* nn)
   std::vector<CvMatPtr> myUpdates;
   updates.Swap(&myUpdates);
   CvMatPtr newWPtr = ProcessUpdates(myUpdates, nn);
-  cv::Mat* newW = newWPtr; (void)newW;
-  DETECT_NUMERICAL_ERRORS(*newW);
   // Lock again for update to W.
   OmpLock::ScopedLock myLockW(&latestWLock);
   latestWPtr = newWPtr;
-  const cv::Mat* latestW = latestWPtr; (void)latestW;
-  DETECT_NUMERICAL_ERRORS(*latestW);
   // Make busy unlocked first so we have order ABAB.
   myBusyLock.Unlock();
   myLockW.Unlock();
+
+  DETECT_NUMERICAL_ERRORS(*newWPtr);
 }
 
 template <typename NNType>
@@ -344,12 +333,9 @@ void UpdateDelegator::ApplyWTo(NNType* nn) const
   newWPtr = latestWPtr;
   myLockW.Unlock();
   nn->SetWPtr(newWPtr);
-  const cv::Mat* newW = newWPtr; (void)newW;
-  std::stringstream ssMsg;
-  ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
-        << "Applying W " << std::hex << static_cast<void*>(newW->data) << "\n";
-  std::cout << ssMsg.str(); std::cout.flush();
-  DETECT_NUMERICAL_ERRORS(*newW);
+  //LogMatrix(*newWPtr, "Applying W", &std::cout);
+
+  DETECT_NUMERICAL_ERRORS(*newWPtr);
 }
 
 template <typename NNType>
@@ -367,44 +353,39 @@ CvMatPtr UpdateDelegator::ProcessUpdates(const std::vector<CvMatPtr>& myUpdates,
   typedef typename NNType::NumericType NumericType;
   // Process the updates.
   CvMatPtr newWPtr = CreateCvMatPtr();
-  cv::Mat* newW = newWPtr;
-  const cv::Mat* latestW = latestWPtr;
-  latestW->copyTo(*newW);
-  std::stringstream ssMsg;
-  ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
-        << "Processing new W " << std::hex << static_cast<void*>(newW->data) << "\n";
-  std::cout << ssMsg.str(); std::cout.flush();
+  latestWPtr->copyTo(*newWPtr);
+  LogMatrix(*newWPtr, "Processing new W", &std::cout);
   const size_t numUpdates = myUpdates.size();
 //  const NumericType avgScale = static_cast<NumericType>(1.0 / numUpdates);
+  std::stringstream ssMsg;
   for (size_t i = 0; i < numUpdates; ++i, ++t)
   {
     DETECT_NUMERICAL_ERRORS(*myUpdates[i]);
     const cv::Mat* update = myUpdates[i];
-    const double dbgGrad = cv::norm(*update);
+    const double gradNormSq = update->dot(*update);
+    LogMatrix(*update, "Processing G", &std::cout);
     ssMsg.str("");
-    ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
-          << "Processing G " << std::hex << static_cast<void*>(update->data) << "\n"
-          << "||g_" << std::dec << t << "|| = " << dbgGrad << "\n";
-    std::cout << ssMsg.str(); std::cout.flush();
+    ssMsg << "||g_" << std::dec << t << "||^2 = " << gradNormSq << "\n";
+    Log(ssMsg.str(), &std::cout);
     const cv::Mat* deltaW = learningRate.ComputeDeltaW(t, *update);
     DETECT_NUMERICAL_ERRORS(*deltaW);
-    const double dbgDeltaNorm = cv::norm(*deltaW);
+    const double deltaWNormSq = deltaW->dot(*deltaW);
+    LogMatrix(*deltaW, "Applying deltaW", &std::cout);
     ssMsg.str("");
-    ssMsg << "||delta_" << std::dec << t << "|| = " << dbgDeltaNorm << "\n";
-    std::cout << ssMsg.str(); std::cout.flush();
-    (*newW) += *deltaW;
-//    cv::scaleAdd(*update, avgScale, *newW, *newW);
+    ssMsg << "||delta_" << std::dec << t << "||^2 = " << deltaWNormSq << "\n";
+    Log(ssMsg.str(), &std::cout);
+    (*newWPtr) += *deltaW;
+//    cv::scaleAdd(*update, avgScale, *newWPtr, *newWPtr);
     nn->SetWPtr(newWPtr);
-    DETECT_NUMERICAL_ERRORS(*newW);
+    DETECT_NUMERICAL_ERRORS(*newWPtr);
     nn->TruncateL2(static_cast<typename NNType::NumericType>(MaxL2));
-    DETECT_NUMERICAL_ERRORS(*newW);
+    DETECT_NUMERICAL_ERRORS(*newWPtr);
   }
   ssMsg.str("");
-  ssMsg << std::setfill('.') << std::setw(HexAddrLabelColW)
-        << "Finished processing new W " << std::hex << static_cast<void*>(newW->data) << "\n"
-           "||W_" << std::dec << t << "|| = " << cv::norm(*newW) << "\n";
-  std::cout << ssMsg.str(); std::cout.flush();
-  DETECT_NUMERICAL_ERRORS(*newW);
+  ssMsg << "||W_" << std::dec << t << "||^2 = " << newWPtr->dot(*newWPtr) << "\n";
+  Log(ssMsg.str(), &std::cout);
+  LogMatrix(*newWPtr, "Finished processing new W", &std::cout);
+  DETECT_NUMERICAL_ERRORS(*newWPtr);
   return newWPtr;
 }
 

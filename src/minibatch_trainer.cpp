@@ -2,6 +2,7 @@
 #include "neural_network.h"
 #include "idx_cv.h"
 #include "omp_lock.h"
+#include "log.h"
 
 #include <algorithm>
 #include <functional>
@@ -18,8 +19,8 @@ namespace nn
 {
 
 WeightExponentialDecay::WeightExponentialDecay()
-: eps0(1.0),
-  exp(0.975),
+: eps0(0.1),
+  exp(0.998),
   rho0(0.5),
   rho1(0.99),
   gradScaleMin(0.001),
@@ -33,15 +34,17 @@ const cv::Mat* WeightExponentialDecay::ComputeDeltaW(int t, const cv::Mat& dLdW)
 //  dLdW.copyTo(*deltaWPrev);
 //  (*deltaWPrev) *= gradScale;
 
+  std::stringstream ssMsg;
+
   const double rhoScale = t / static_cast<double>(T);
   const double rhoT = (t >= T) ? rho1 : (rhoScale * rho1) + ((1.0 - rhoScale) * rho0);
   const double epsT = eps0 * std::pow(exp, t);
   const double gradScale = -std::max((1 - rhoT) * epsT, gradScaleMin);
-  std::stringstream ssMsg;
+  ssMsg.str("");;
   ssMsg <<  std::dec
         << "t = " << t << ", rhoScale = " << rhoScale << ", rhoT = " << rhoT << ", "
            "epsT = " << epsT << ", gradScale = " << gradScale << std::endl;
-  std::cout << ssMsg.str(); std::cout.flush();
+  Log(ssMsg.str(), &std::cout);
   (*deltaWPrev) *= rhoT;
   cv::scaleAdd(dLdW, gradScale, *deltaWPrev, *deltaWPrev);
 
