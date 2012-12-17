@@ -10,7 +10,8 @@
 #include <cmath>
 #include <assert.h>
 
-#define DETECT_NUMERICAL_ERRORS_ENABED
+// br - Enable to perform lots of numerical checks during computation.
+//#define DETECT_NUMERICAL_ERRORS_ENABED
 #if defined(DETECT_NUMERICAL_ERRORS_ENABED)
 #define DETECT_NUMERICAL_ERRORS(cvMat)                                                            \
   {                                                                                               \
@@ -260,7 +261,6 @@ double Linear<NumInputs_, NumOutputs_, NumericType_>
   cv::Mat B = W.rowRange(ParamsLinearMat, NumParameters);
   // Check each row's norm (and his offset!).
   const double scaleNumerator = std::sqrt(maxNormSq);
-  double maxExceedRowNormSq = maxNormSq;
   for (int i = 0; i < M.rows; ++i)
   {
     cv::Mat r = M.row(i);
@@ -268,11 +268,16 @@ double Linear<NumInputs_, NumOutputs_, NumericType_>
     DETECT_NUMERICAL_ERRORS(r);
     DETECT_NUMERICAL_ERRORS(b);
     const double rowNormSq = r.dot(r) + b.dot(b);
-    maxExceedRowNormSq = std::max(rowNormSq, maxExceedRowNormSq);
-//    std::cout << "rowNormSq = " << rowNormSq << std::endl;
+    if (rowNormSq > maxNormSq)
+    {
+      const double hiddenUnitRenormScale = scaleNumerator / std::sqrt(rowNormSq);
+      r *= hiddenUnitRenormScale;
+      b *= hiddenUnitRenormScale;
+      std::cout << "Scaling hidden unit " << i << " by " << hiddenUnitRenormScale << "\n";
+      assert(((maxNormSq + 1e-6) - (r.dot(r) + b.dot(b))) > 0);
+    }
   }
-//  std::cout << "maxExceedRowNormSq = " << maxExceedRowNormSq << std::endl;
-  return scaleNumerator / std::sqrt(maxExceedRowNormSq);
+  return 1;
 }
 
 template <int NumInputs_, typename NumericType_>
@@ -309,7 +314,7 @@ void Tanh<NumInputs_, NumericType_>
   const cv::MatConstIterator_<NumericType> dxEnd = dLdX->end<NumericType>();
   for(; dx != dxEnd; ++x, ++dy, ++dx)
   {
-    (*dx) = static_cast<NumericType>(1.0 / std::max<double>(std::cosh(*x), 1e-16));
+    (*dx) = static_cast<NumericType>(1.0 / std::max<double>(std::cosh(*x), 1e-100));
     (*dx) *= (*dx) * (*dy);
   }
   DETECT_NUMERICAL_ERRORS(*dLdX);
@@ -340,7 +345,7 @@ void SoftMax<NumClasses_, NumericType_>
   const bool isInf = my_isinf(preNormSum) || my_isinf(preNormSq);
   if (!isNan && !isInf)
   {
-    const NumericType normFactor = static_cast<NumericType>(1.0 / std::max(preNormSum, 1e-16));
+    const NumericType normFactor = static_cast<NumericType>(1.0 / std::max(preNormSum, 1e-100));
     (*Y) *= normFactor;
   }
   else
@@ -440,7 +445,7 @@ SampleLoss(const NNType& nn, const cv::Mat& xi, const cv::Mat& yi, double* loss,
   assert(yLabel >= 0);
   if (0 == yLabel)
   {
-    *loss = 1e10;
+    *loss = 1e100;
   }
   else
   {
@@ -480,7 +485,7 @@ SampleGradient(NNType* nn, const cv::Mat& xi, const cv::Mat& yi,
   DETECT_NUMERICAL_ERRORS(*yOut);
   // Compute loss gradient to get this party started.
   const int trueLabel = yi.at<unsigned char>(0, 0);
-  const NumericType pClass = std::max<NumericType>(yOut->at<NumericType>(trueLabel, 0), 1e-16);
+  const NumericType pClass = std::max<NumericType>(yOut->at<NumericType>(trueLabel, 0), 1e-100);
   assert(pClass > 0);
   const NumericType nllGrad = static_cast<NumericType>(-1.0 / pClass);
   *dLdY = cv::Scalar::all(0);

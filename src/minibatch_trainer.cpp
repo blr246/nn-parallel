@@ -19,11 +19,21 @@ namespace nn
 {
 
 WeightExponentialDecay::WeightExponentialDecay()
-: eps0(0.1),
+: eps0(0.05),
   exp(0.998),
   rho0(0.5),
   rho1(0.99),
-  gradScaleMin(0.001),
+  epsMin(0.001),
+  deltaWPrev(CreateCvMatPtr())
+{}
+
+WeightExponentialDecay::WeightExponentialDecay(
+    double eps0_, double exp_, double rho0_, double rho1_, double epsMin_)
+: eps0(eps0_),
+  exp(exp_),
+  rho0(rho0_),
+  rho1(rho1_),
+  epsMin(epsMin_),
   deltaWPrev(CreateCvMatPtr())
 {}
 
@@ -38,8 +48,8 @@ const cv::Mat* WeightExponentialDecay::ComputeDeltaW(int t, const cv::Mat& dLdW)
 
   const double rhoScale = t / static_cast<double>(T);
   const double rhoT = (t >= T) ? rho1 : (rhoScale * rho1) + ((1.0 - rhoScale) * rho0);
-  const double epsT = eps0 * std::pow(exp, t);
-  const double gradScale = -std::max((1 - rhoT) * epsT, gradScaleMin);
+  const double epsT = std::max(eps0 * std::pow(exp, t), epsMin);
+  const double gradScale = -(1 - rhoT) * epsT;
   ssMsg.str("");;
   ssMsg <<  std::dec
         << "t = " << t << ", rhoScale = " << rhoScale << ", rhoT = " << rhoT << ", "
@@ -53,11 +63,24 @@ const cv::Mat* WeightExponentialDecay::ComputeDeltaW(int t, const cv::Mat& dLdW)
   return deltaWPrev;
 }
 
-UpdateDelegator::UpdateDelegator()
+UpdateDelegator::UpdateDelegator(double maxL2_)
 : latestWPtr(CreateCvMatPtr()),
   dataTrain(NULL),
   dataTest(NULL),
   learningRate(),
+  maxL2(maxL2_),
+  t(0),
+  updates(),
+  busyLock(),
+  latestWLock()
+{}
+
+UpdateDelegator::UpdateDelegator(const WeightExponentialDecay& learningRate_, double maxL2_)
+: latestWPtr(CreateCvMatPtr()),
+  dataTrain(NULL),
+  dataTest(NULL),
+  learningRate(learningRate_),
+  maxL2(maxL2_),
   t(0),
   updates(),
   busyLock(),

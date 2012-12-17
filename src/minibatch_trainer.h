@@ -18,25 +18,31 @@ namespace blr
 namespace nn
 {
 
-enum { MaxL2 = 1, };
 typedef std::pair<cv::Mat, cv::Mat> Dataset;
 
 /// <summary>Parallelizable neural network trainer.</summary>
 template <typename NNType_, typename WeightUpdateType_>
-struct MiniBatchTrainer
+class MiniBatchTrainer
 {
+public:
   typedef NNType_ NNType;
   typedef typename NNType::NumericType NumericType;
   typedef WeightUpdateType_ WeightUpdateType;
   enum { CvType = NumericTypeToCvType<NumericType>::CvType, };
 
-  MiniBatchTrainer();
   MiniBatchTrainer(NNType* nn_,
                    WeightUpdateType weightUpdater_,
                    const Dataset* dataTrain_, const Dataset* dataTest_,
                    int numBatches_, int batchSize_);
+  MiniBatchTrainer(const MiniBatchTrainer& rhs);
+
+  void RefreshSampleIdx();
+  void SetNN(NNType* nn_);
 
   void Run(int t);
+
+private:
+  MiniBatchTrainer& operator=(const MiniBatchTrainer&);
 
   NNType* nn;
   WeightUpdateType weightUpdater;
@@ -51,7 +57,10 @@ struct MiniBatchTrainer
 struct WeightExponentialDecay
 {
   enum { T = 500, };
+
   WeightExponentialDecay();
+  WeightExponentialDecay(
+      double eps0_, double exp_, double rho0_, double rho1_, double epsMin_);
 
   template <typename NNType>
   void Initialize(const NNType* nn);
@@ -61,7 +70,7 @@ struct WeightExponentialDecay
   double exp;
   double rho0;
   double rho1;
-  double gradScaleMin;
+  double epsMin;
   CvMatPtr deltaWPrev;
 };
 
@@ -86,7 +95,8 @@ private:
 
 struct UpdateDelegator
 {
-  UpdateDelegator();
+  explicit UpdateDelegator(double maxL2_);
+  UpdateDelegator(const WeightExponentialDecay& learningRate_, double maxL2_);
 
   template <typename NNType>
   void Initialize(NNType* nn, const Dataset* dataTrain_, const Dataset* dataTest_);
@@ -110,6 +120,7 @@ private:
   const Dataset* dataTrain;
   const Dataset* dataTest;
   WeightExponentialDecay learningRate;
+  double maxL2;
   int t;
 
   ThreadsafeVector<CvMatPtr> updates;
@@ -137,19 +148,6 @@ struct UpdateDelegatorWrapper
 ////////////////////////////////////////////////////////////////////////////////
 template <typename NNType_, typename WeightUpdateType_>
 MiniBatchTrainer<NNType_, WeightUpdateType_>
-::MiniBatchTrainer()
-: nn(NULL),
-  weightUpdater(),
-  dataTrain(NULL),
-  dataTest(NULL),
-  numBatches(0),
-  batchSize(0),
-  sampleIdx(0),
-  dLdY(NNType::NumClasses, 1, CvType)
-{}
-
-template <typename NNType_, typename WeightUpdateType_>
-MiniBatchTrainer<NNType_, WeightUpdateType_>
 ::MiniBatchTrainer(NNType* nn_,
                    WeightUpdateType weightUpdater_,
                    const Dataset* dataTrain_, const Dataset* dataTest_,
@@ -163,6 +161,33 @@ MiniBatchTrainer<NNType_, WeightUpdateType_>
   sampleIdx(RandBound(dataTrain->first.rows)),
   dLdY(NNType::NumClasses, 1, CvType)
 {}
+
+template <typename NNType_, typename WeightUpdateType_>
+MiniBatchTrainer<NNType_, WeightUpdateType_>
+::MiniBatchTrainer(const MiniBatchTrainer& rhs)
+: nn(rhs.nn),
+  weightUpdater(rhs.weightUpdater),
+  dataTrain(rhs.dataTrain),
+  dataTest(rhs.dataTest),
+  numBatches(rhs.numBatches),
+  batchSize(rhs.batchSize),
+  sampleIdx(rhs.sampleIdx),
+  dLdY(NNType::NumClasses, 1, CvType)
+{}
+
+template <typename NNType_, typename WeightUpdateType_>
+void MiniBatchTrainer<NNType_, WeightUpdateType_>
+::RefreshSampleIdx()
+{
+  sampleIdx = RandBound(dataTrain->first.rows);
+}
+
+template <typename NNType_, typename WeightUpdateType_>
+void MiniBatchTrainer<NNType_, WeightUpdateType_>
+::SetNN(NNType* nn_)
+{
+  nn = nn_;
+}
 
 template <typename NNType_, typename WeightUpdateType_>
 void MiniBatchTrainer<NNType_, WeightUpdateType_>
@@ -184,8 +209,6 @@ void MiniBatchTrainer<NNType_, WeightUpdateType_>
   CvMatPtr dwAccum = CreateCvMatPtr();
   dwAccum->create(WPtr->size(), CvType);
   *dwAccum = cv::Scalar::all(0);
-  // br - What is the best policy for dropout refresh?
-//  nn->RefreshDropoutMask();
   for (int batchIdxJ = 0; batchIdxJ < batchSize; ++batchIdxJ, ++sampleIdx)
   {
     nn->RefreshDropoutMask();
@@ -378,7 +401,7 @@ CvMatPtr UpdateDelegator::ProcessUpdates(const std::vector<CvMatPtr>& myUpdates,
 //    cv::scaleAdd(*update, avgScale, *newWPtr, *newWPtr);
     nn->SetWPtr(newWPtr);
     DETECT_NUMERICAL_ERRORS(*newWPtr);
-    nn->TruncateL2(static_cast<typename NNType::NumericType>(MaxL2));
+    nn->TruncateL2(maxL2);
     DETECT_NUMERICAL_ERRORS(*newWPtr);
   }
   ssMsg.str("");

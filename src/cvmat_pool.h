@@ -19,7 +19,7 @@ public:
   class ScopedLock
   {
   public:
-    ScopedLock(CvMatPool* pool_);
+    explicit ScopedLock(CvMatPool* pool_);
     ~ScopedLock();
 
     std::vector<cv::Mat*>* GetItems() const;

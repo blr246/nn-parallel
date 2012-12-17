@@ -129,7 +129,7 @@ private:
 template <typename NNType>
 struct ScopedDropoutEnabler
 {
-  ScopedDropoutEnabler(NNType* nn_);
+  explicit ScopedDropoutEnabler(NNType* nn_);
   ~ScopedDropoutEnabler();
   NNType* nn;
   bool wasEnabled;
@@ -138,7 +138,7 @@ struct ScopedDropoutEnabler
 template <typename NNType>
 struct ScopedDropoutDisabler
 {
-  ScopedDropoutDisabler(NNType* nn_);
+  explicit ScopedDropoutDisabler(NNType* nn_);
   ~ScopedDropoutDisabler();
   NNType* nn;
   bool wasEnabled;
@@ -280,8 +280,8 @@ const cv::Mat* DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
 
 struct BackpropIterator
 {
-  BackpropIterator(const cv::Mat* X_, const cv::Mat* W_, const cv::Mat* Y_, const cv::Mat* dLdY_,
-                   cv::Mat* dLdW_, cv::Mat* dLdX_)
+  BackpropIterator(const cv::Mat* X_, const cv::Mat* W_, const cv::Mat* Y_,
+                   cv::Mat* dLdY_, cv::Mat* dLdW_, cv::Mat* dLdX_)
     : X(X_),
       W(W_),
       Y(Y_),
@@ -303,7 +303,7 @@ struct BackpropIterator
   const cv::Mat* X;
   const cv::Mat* W;
   const cv::Mat* Y;
-  const cv::Mat* dLdY;
+  cv::Mat* dLdY;
   cv::Mat* dLdW;
   cv::Mat* dLdX;
 };
@@ -314,6 +314,7 @@ const cv::Mat* DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
                                   DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
 ::Backward(const cv::Mat dLdY)
 {
+  using detail::ApplyDropout;
   // Base case.
   Layer3b::Backward(yPartitions[NumSublayers - 2],
                     wPartitions[NumSublayers - 1],
@@ -325,12 +326,20 @@ const cv::Mat* DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
                           dwPartitions + NumSublayers - 2, dxPartitions + NumSublayers - 2);
   Layer3a::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
   bpIter.Next();
+  ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
+      dropoutEnabled, dropoutPartitions[2], bpIter.dLdY);
   Layer2b::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
   bpIter.Next();
+  ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
+      dropoutEnabled, dropoutPartitions[2], bpIter.dLdY);
   Layer2a::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
   bpIter.Next();
+  ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
+      dropoutEnabled, dropoutPartitions[1], bpIter.dLdY);
   Layer1b::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
   bpIter.Next();
+  ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
+      dropoutEnabled, dropoutPartitions[1], bpIter.dLdY);
   Layer1a::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
 
 #if !defined(NDEBUG)
@@ -405,29 +414,21 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
 ::TruncateL2(const NumericType maxNorm)
 {
   int layerIdx = 0;
-  double normFactor = 1.0;
-  normFactor = std::min(Layer0::ComputeTruncateL2Factor(wPartitions[layerIdx], maxNorm), normFactor);
+  double normScale = 1.0;
+  normScale = Layer0::ComputeTruncateL2Factor(wPartitions[layerIdx], maxNorm);
   ++layerIdx;
-  normFactor = std::min(Layer1a::ComputeTruncateL2Factor(wPartitions[layerIdx], maxNorm), normFactor);
-  ++layerIdx;                                                                          
-  normFactor = std::min(Layer1b::ComputeTruncateL2Factor(wPartitions[layerIdx], maxNorm), normFactor);
-  ++layerIdx;                                                                          
-  normFactor = std::min(Layer2a::ComputeTruncateL2Factor(wPartitions[layerIdx], maxNorm), normFactor);
-  ++layerIdx;                                                                          
-  normFactor = std::min(Layer2b::ComputeTruncateL2Factor(wPartitions[layerIdx], maxNorm), normFactor);
-  ++layerIdx;                                                                          
-  normFactor = std::min(Layer3a::ComputeTruncateL2Factor(wPartitions[layerIdx], maxNorm), normFactor);
-  ++layerIdx;                                                                          
-  normFactor = std::min(Layer3b::ComputeTruncateL2Factor(wPartitions[layerIdx], maxNorm), normFactor);
+  normScale = Layer1a::ComputeTruncateL2Factor(wPartitions[layerIdx], maxNorm);
+  ++layerIdx;                                                                 
+  normScale = Layer1b::ComputeTruncateL2Factor(wPartitions[layerIdx], maxNorm);
+  ++layerIdx;                                                                 
+  normScale = Layer2a::ComputeTruncateL2Factor(wPartitions[layerIdx], maxNorm);
+  ++layerIdx;                                                                 
+  normScale = Layer2b::ComputeTruncateL2Factor(wPartitions[layerIdx], maxNorm);
+  ++layerIdx;                                                                 
+  normScale = Layer3a::ComputeTruncateL2Factor(wPartitions[layerIdx], maxNorm);
+  ++layerIdx;                                                                 
+  normScale = Layer3b::ComputeTruncateL2Factor(wPartitions[layerIdx], maxNorm);
   ++layerIdx;
-  assert(normFactor <= 1);
-  std::stringstream ssMsg;
-  ssMsg << "Scaling W by " << normFactor << "\n";
-  Log(ssMsg.str(), &std::cout);
-  if (normFactor < 1)
-  {
-    (*WPtr) *= normFactor;
-  }
 
   DETECT_NUMERICAL_ERRORS(*WPtr);
 #if !defined(NDEBUG)
