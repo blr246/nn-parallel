@@ -59,7 +59,8 @@ void ZeroMeanUnitVarInternal(cv::Mat* X, cv::Mat* mu, cv::Mat* stddev, bool appl
       cv::Scalar cMu = cv::mean(Xcol);
       mu->row(i) = cMu.val[0];
     }
-    Xcol -= mu->at<NumericType>(0, i);
+    const double cMu = mu->at<NumericType>(i, 0);
+    Xcol -= cMu;
   }
   // Compute stddev per channel (column).
   for (int i = 0; i < X->cols; ++i)
