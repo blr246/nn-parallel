@@ -56,11 +56,11 @@ void ComputeDatasetLossParallel(const Dataset& dataset,
 
 enum
 {
-  ERROR_NONE           = 0,
-  ERROR_BAD_ARGUMENTS  = 1 << 0,
-  ERROR_BAD_TRAIN_DATA = 1 << 1,
-  ERROR_BAD_TEST_DATA  = 1 << 2,
-  ERROR_BAD_DATA_DIMS  = 1 << 3,
+  NN_ERROR_NONE           = 0,
+  NN_ERROR_BAD_ARGUMENTS  = 1 << 0,
+  NN_ERROR_BAD_TRAIN_DATA = 1 << 1,
+  NN_ERROR_BAD_TEST_DATA  = 1 << 2,
+  NN_ERROR_BAD_DATA_DIMS  = 1 << 3,
 };
 
 struct Args
@@ -147,14 +147,14 @@ int main(int argc, char** argv)
   ssMsg.str("");
   ssMsg << "Loading data...\n";
   Log(ssMsg.str(), &std::cout);
-  int errorCode = ERROR_NONE;
+  int errorCode = NN_ERROR_NONE;
   Dataset dataTrain;
   if (!IdxToCvMat(dataTrainPaths.first, CvType, MaxRows, &dataTrain.first) ||
       !IdxToCvMat(dataTrainPaths.second, CV_8U, MaxRows, &dataTrain.second) ||
       (dataTrain.first.rows != dataTrain.second.rows))
   {
     std::cerr << "Error loading training data\n";
-    errorCode |= ERROR_BAD_TRAIN_DATA;
+    errorCode |= NN_ERROR_BAD_TRAIN_DATA;
   }
   ssMsg.str("");
   ssMsg << "Loaded " << dataTrain.first.rows << " training data points "
@@ -166,7 +166,7 @@ int main(int argc, char** argv)
       (dataTest.first.rows != dataTest.second.rows))
   {
     std::cerr << "Error loading testing data\n";
-    errorCode |= ERROR_BAD_TEST_DATA;
+    errorCode |= NN_ERROR_BAD_TEST_DATA;
   }
   ssMsg.str("");
   ssMsg << "Loaded " << dataTest.first.rows << " testing data points "
@@ -176,7 +176,7 @@ int main(int argc, char** argv)
   if (dataTrain.first.cols != dataTest.first.cols)
   {
     std::cerr << "Error: train/test input dims unmatched\n";
-    errorCode |= ERROR_BAD_DATA_DIMS;
+    errorCode |= NN_ERROR_BAD_DATA_DIMS;
   }
   if (errorCode)
   {

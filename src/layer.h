@@ -485,7 +485,8 @@ SampleGradient(NNType* nn, const cv::Mat& xi, const cv::Mat& yi,
   DETECT_NUMERICAL_ERRORS(*yOut);
   // Compute loss gradient to get this party started.
   const int trueLabel = yi.at<unsigned char>(0, 0);
-  const NumericType pClass = std::max<NumericType>(yOut->at<NumericType>(trueLabel, 0), 1e-100);
+  const NumericType pClass = std::max(yOut->at<NumericType>(trueLabel, 0),
+                                      static_cast<NumericType>(1e-16));
   assert(pClass > 0);
   const NumericType nllGrad = static_cast<NumericType>(-1.0 / pClass);
   *dLdY = cv::Scalar::all(0);

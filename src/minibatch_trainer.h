@@ -401,7 +401,7 @@ CvMatPtr UpdateDelegator::ProcessUpdates(const std::vector<CvMatPtr>& myUpdates,
 //    cv::scaleAdd(*update, avgScale, *newWPtr, *newWPtr);
     nn->SetWPtr(newWPtr);
     DETECT_NUMERICAL_ERRORS(*newWPtr);
-    nn->TruncateL2(maxL2);
+    nn->TruncateL2(static_cast<NumericType>(maxL2));
     DETECT_NUMERICAL_ERRORS(*newWPtr);
   }
   ssMsg.str("");
