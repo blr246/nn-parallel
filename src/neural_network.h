@@ -22,10 +22,10 @@
 #ifndef SRC_NEURAL_NEWTORK_H
 #define SRC_NEURAL_NEWTORK_H
 #include "layer.h"
-#include "log.h"
 #include "rand_bound.h"
 #include "cvmat_pool.h"
 #include "type_utils.h"
+#include "log.h"
 
 #include "opencv/cv.h"
 #include <algorithm>
@@ -97,7 +97,7 @@ public:
                                 Layer2a::NumOutputs, };
 
   const cv::Mat* Forward(const cv::Mat& X) const;
-  const cv::Mat* Backward(const cv::Mat dLdY);
+  const cv::Mat* Backward(const cv::Mat& dLdY);
   void Reset();
 
   void EnableDropout();
@@ -240,19 +240,50 @@ DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
 namespace detail
 {
 template <typename NumericType, int P>
-struct ApplyDropout
+struct DropoutHandler
 {
   static void Apply(bool enabled, const cv::Mat& dropout, cv::Mat* m)
   {
     if (enabled)
     {
-      (*m).mul(dropout);
+      cv::multiply(dropout, *m, *m);
     }
-    else
+    // br - The Torch implementation scales always. Why?
+    //else
     {
       const NumericType dropoutScale = static_cast<NumericType>(1.0 - (P / 100.0));
       (*m) *= dropoutScale;
     }
+  }
+
+  template <int P>
+  struct RefreshMaskHelper
+  {
+    static void Apply(cv::Mat* dropoutMask)
+    {
+      const size_t numEles = dropoutMask->rows;
+      for (size_t j = 0; j < numEles; ++j)
+      {
+        dropoutMask->at<NumericType>(j, 0) =
+          static_cast<NumericType>((RandBound(100) < P) ? 0 : 1);
+      }
+    }
+  };
+
+  template <>
+  struct RefreshMaskHelper<0>
+  {
+    inline
+    static void Apply(cv::Mat* dropoutMask)
+    {
+      (*dropoutMask) = cv::Scalar::all(1);
+    }
+  };
+
+  inline
+  static void RefreshMask(cv::Mat* dropoutMask)
+  {
+    RefreshMaskHelper<P>::Apply(dropoutMask);
   }
 };
 }
@@ -263,29 +294,27 @@ const cv::Mat* DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
                                   DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
 ::Forward(const cv::Mat& X) const
 {
-  using detail::ApplyDropout;
+  using detail::DropoutHandler;
+  typedef DropoutHandler<NumericType, DropoutProbabilityInput> DropoutHandlerInput;
+  typedef DropoutHandler<NumericType, DropoutProbabilityHidden> DropoutHandlerHidden;
 
   int layerIdx = 0;
   Layer0::Forward(X, wPartitions[layerIdx], &yPartitions[layerIdx]);
-  ApplyDropout<NumericType, DropoutProbabilityInput>::Apply(
-      dropoutEnabled, dropoutPartitions[0], yPartitions + layerIdx);
+  DropoutHandlerInput::Apply(dropoutEnabled, dropoutPartitions[0], yPartitions + layerIdx);
   cv::Mat* yPrev = yPartitions; ++layerIdx;
+
   Layer1a::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
-  ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
-      dropoutEnabled, dropoutPartitions[1], yPartitions + layerIdx);
   ++yPrev; ++layerIdx;
   Layer1b::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
-  ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
-      dropoutEnabled, dropoutPartitions[1], yPartitions + layerIdx);
+  DropoutHandlerHidden::Apply(dropoutEnabled, dropoutPartitions[1], yPartitions + layerIdx);
   ++yPrev; ++layerIdx;
+
   Layer2a::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
-  ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
-      dropoutEnabled, dropoutPartitions[2], yPartitions + layerIdx);
   ++yPrev; ++layerIdx;
   Layer2b::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
-  ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
-      dropoutEnabled, dropoutPartitions[2], yPartitions + layerIdx);
+  DropoutHandlerHidden::Apply(dropoutEnabled, dropoutPartitions[2], yPartitions + layerIdx);
   ++yPrev; ++layerIdx;
+
   Layer3a::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
   ++yPrev; ++layerIdx;
   Layer3b::Forward(*yPrev, wPartitions[layerIdx], &yPartitions[layerIdx]);
@@ -295,7 +324,6 @@ const cv::Mat* DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   AssertDataPointersValid();
   lastCallState = CalledForward;
 #endif
-
   return yPrev;
 }
 
@@ -333,9 +361,12 @@ template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,
           int DropoutProbabilityInput_, int DropoutProbabilityHidden_, typename NumericType_>
 const cv::Mat* DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
                                   DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
-::Backward(const cv::Mat dLdY)
+::Backward(const cv::Mat& dLdY)
 {
-  using detail::ApplyDropout;
+  using detail::DropoutHandler;
+  typedef DropoutHandler<NumericType, DropoutProbabilityInput> DropoutHandlerInput;
+  typedef DropoutHandler<NumericType, DropoutProbabilityHidden> DropoutHandlerHidden;
+
   // Base case.
   Layer3b::Backward(yPartitions[NumSublayers - 2],
                     wPartitions[NumSublayers - 1],
@@ -347,28 +378,27 @@ const cv::Mat* DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
                           dwPartitions + NumSublayers - 2, dxPartitions + NumSublayers - 2);
   Layer3a::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
   bpIter.Next();
-  ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
-      dropoutEnabled, dropoutPartitions[2], bpIter.dLdY);
+
+  DropoutHandlerHidden::Apply(dropoutEnabled, dropoutPartitions[2], bpIter.dLdY);
   Layer2b::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
   bpIter.Next();
-  ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
-      dropoutEnabled, dropoutPartitions[2], bpIter.dLdY);
   Layer2a::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
   bpIter.Next();
-  ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
-      dropoutEnabled, dropoutPartitions[1], bpIter.dLdY);
+
+  DropoutHandlerHidden::Apply(dropoutEnabled, dropoutPartitions[1], bpIter.dLdY);
   Layer1b::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
   bpIter.Next();
-  ApplyDropout<NumericType, DropoutProbabilityHidden>::Apply(
-      dropoutEnabled, dropoutPartitions[1], bpIter.dLdY);
   Layer1a::Backward(*bpIter.X, *bpIter.W, *bpIter.Y, *bpIter.dLdY, bpIter.dLdW, bpIter.dLdX);
+
+//  // L2 regularization.
+//  const double lambda = 1e-3;
+//  dLdW += lambda * (*WPtr);
 
 #if !defined(NDEBUG)
   assert(CalledForward == lastCallState);
   lastCallState = CalledBackward;
   AssertDataPointersValid();
 #endif
-
   return &dLdW;
 }
 
@@ -408,20 +438,15 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
                         DropoutProbabilityInput_, DropoutProbabilityHidden_, NumericType_>
 ::RefreshDropoutMask()
 {
-  // Perform Bernoulli on each output with given probability.
-  for (int i = 0; i < NumDropoutLayers; ++i)
-  {
-    const int dropoutProbability = (i < 1) ?
-                                   static_cast<int>(DropoutProbabilityHidden) :
-                                   static_cast<int>(DropoutProbabilityInput);
-    cv::Mat& dropout = dropoutPartitions[i];
-    const size_t numEles = dropout.rows;
-    for (size_t j = 0; j < numEles; ++j)
-    {
-      dropout.at<NumericType>(j, 0) =
-        static_cast<NumericType>((RandBound(100) < dropoutProbability) ? 1 : 0);
-    }
-  }
+  using detail::DropoutHandler;
+  typedef DropoutHandler<NumericType, DropoutProbabilityInput> DropoutHandlerInput;
+  typedef DropoutHandler<NumericType, DropoutProbabilityHidden> DropoutHandlerHidden;
+
+  int i = 0;
+  DropoutHandlerInput::RefreshMask(dropoutPartitions + i++);
+  DropoutHandlerHidden::RefreshMask(dropoutPartitions + i++);
+  DropoutHandlerHidden::RefreshMask(dropoutPartitions + i++);
+
 #if !defined(NDEBUG)
   AssertDataPointersValid();
 #endif
@@ -467,7 +492,7 @@ void DualLayerNNSoftmax<NumInputs_, NumClasses_, NumHiddenUnits_,
   // As per Hinton, et. al. http://arxiv.org/abs/1207.0580:
   //   w ~ N(0, 0.01)
   cv::randn(*WPtr, cv::Scalar::all(0), cv::Scalar::all(0.01));
-  std::cout << "*****************RESET************" << std::endl;
+  LogMatrix((*WPtr), "Reset weights", &std::cout);
 }
 
 template <int NumInputs_, int NumClasses_, int NumHiddenUnits_,

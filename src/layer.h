@@ -32,7 +32,7 @@
 #include <assert.h>
 
 // br - Enable to perform lots of numerical checks during computation.
-//#define DETECT_NUMERICAL_ERRORS_ENABED
+#define DETECT_NUMERICAL_ERRORS_ENABED
 #if defined(DETECT_NUMERICAL_ERRORS_ENABED)
 #define DETECT_NUMERICAL_ERRORS(cvMat)                                                            \
   {                                                                                               \
@@ -286,8 +286,6 @@ double Linear<NumInputs_, NumOutputs_, NumericType_>
   {
     cv::Mat r = M.row(i);
     cv::Mat b = B.row(i);
-    DETECT_NUMERICAL_ERRORS(r);
-    DETECT_NUMERICAL_ERRORS(b);
     const double rowNormSq = r.dot(r) + b.dot(b);
     if (rowNormSq > maxNormSq)
     {
@@ -295,8 +293,10 @@ double Linear<NumInputs_, NumOutputs_, NumericType_>
       r *= hiddenUnitRenormScale;
       b *= hiddenUnitRenormScale;
       std::cout << "Scaling hidden unit " << i << " by " << hiddenUnitRenormScale << "\n";
-      assert(((maxNormSq + 1e-6) - (r.dot(r) + b.dot(b))) > 0);
+      assert(((maxNormSq + 1e-1) - (r.dot(r) + b.dot(b))) > 0);
     }
+    DETECT_NUMERICAL_ERRORS(r);
+    DETECT_NUMERICAL_ERRORS(b);
   }
   return 1;
 }
@@ -335,7 +335,8 @@ void Tanh<NumInputs_, NumericType_>
   const cv::MatConstIterator_<NumericType> dxEnd = dLdX->end<NumericType>();
   for(; dx != dxEnd; ++x, ++dy, ++dx)
   {
-    (*dx) = static_cast<NumericType>(1.0 / std::max<double>(std::cosh(*x), 1e-100));
+    //(*dx) = static_cast<NumericType>(1.0 / std::max<double>(std::cosh(*x), 1e-100));
+    (*dx) = static_cast<NumericType>(1.0 / std::cosh(*x));
     (*dx) *= (*dx) * (*dy);
   }
   DETECT_NUMERICAL_ERRORS(*dLdX);
@@ -349,56 +350,85 @@ double Tanh<NumInputs_, NumericType_>
   return 1;
 }
 
+namespace detail
+{
+template <typename NumericType>
+void MaxElement(const cv::Mat& m, NumericType* maxVal, int* maxIdx)
+{
+  // Compute index of output category.
+  *maxIdx = 0;
+  cv::MatConstIterator_<NumericType> y = m.begin<NumericType>();
+  const cv::MatConstIterator_<NumericType> yEnd = m.end<NumericType>();
+  *maxVal = *y;
+  int i = 1;
+  for (++y; y != yEnd; ++y, ++i)
+  {
+    if (*y > *maxVal)
+    {
+      *maxVal = *y;
+      *maxIdx = i;
+    }
+  }
+}
+}
+
 template <int NumClasses_, typename NumericType_>
 inline
 void SoftMax<NumClasses_, NumericType_>
 ::Forward(const cv::Mat& X, const cv::Mat& /*W*/, cv::Mat* Y)
 {
+  using detail::MaxElement;
+
   assert(X.rows == Y->rows && X.type() == Y->type());
   DETECT_NUMERICAL_ERRORS(X);
-  // Compute softmax as in Y = exp(-X) / \sum{exp(-X)}
-  (*Y) = -1 * X;
+  // Compute softmax as in Y = exp(X) / \sum{exp(X)}
+  int maxIdx;
+  NumericType maxVal;
+  MaxElement(X, &maxVal, &maxIdx);
+  *Y = X - maxVal;
   cv::exp(*Y, *Y);
-  // Perform Gibbs normalization. Sometimes this goes badly with infinities.
+  // Perform Gibbs normalization.
   const double preNormSum = cv::sum(*Y).val[0];
-  const double preNormSq = Y->dot(*Y);
-  const bool isNan = my_isnan(preNormSum) || my_isnan(preNormSq);
-  const bool isInf = my_isinf(preNormSum) || my_isinf(preNormSq);
-  if (!isNan && !isInf)
+  const bool isNan = my_isnan(preNormSum) != 0;
+  assert(!isNan); (void)isNan;
+  const bool isInf = my_isinf(preNormSum) != 0;
+  assert(!isInf); (void)isInf;
+//  if (!isInf)
   {
-    const NumericType normFactor = static_cast<NumericType>(1.0 / std::max(preNormSum, 1e-100));
+    //const NumericType normFactor = static_cast<NumericType>(1.0 / std::max(preNormSum, 1e-100));
+    const NumericType normFactor = static_cast<NumericType>(1.0 / preNormSum);
     (*Y) *= normFactor;
   }
-  else
-  {
-    std::stringstream ssMsg;
-    ssMsg << "Whoa, bro, preNormSum = " << preNormSum << ", preNormSq = " << preNormSq << "\n";
-    std::cout << ssMsg.str(); std::cout.flush();
-    // Make all infinities 1, all non-infinities 0.
-    cv::MatIterator_<NumericType> y = Y->begin<NumericType>();
-    const cv::MatConstIterator_<NumericType> yEnd = Y->end<NumericType>();
-    int infCount = 0;
-    for(; y != yEnd; ++y)
-    {
-      if (*y > std::numeric_limits<NumericType>::max())
-      {
-        ++infCount;
-        *y = static_cast<NumericType>(1);
-      }
-      else
-      {
-        *y = 0;
-      }
-    }
-    if (infCount > 0)
-    {
-      *Y *= static_cast<NumericType>(1.0 / infCount);
-    }
-    else
-    {
-      *Y = static_cast<NumericType>(1.0 / Y->rows);
-    }
-  }
+//  else
+//  {
+//    std::stringstream ssMsg;
+//    ssMsg << "Whoa, bro, preNormSum = " << preNormSum << "\n";//", preNormSq = " << preNormSq << "\n";
+//    std::cout << ssMsg.str(); std::cout.flush();
+//    // Make all infinities 1, all non-infinities 0.
+//    cv::MatIterator_<NumericType> y = Y->begin<NumericType>();
+//    const cv::MatConstIterator_<NumericType> yEnd = Y->end<NumericType>();
+//    int infCount = 0;
+//    for(; y != yEnd; ++y)
+//    {
+//      if (*y > std::numeric_limits<NumericType>::max())
+//      {
+//        ++infCount;
+//        *y = static_cast<NumericType>(1);
+//      }
+//      else
+//      {
+//        *y = 0;
+//      }
+//    }
+//    if (infCount > 0)
+//    {
+//      *Y *= static_cast<NumericType>(1.0 / infCount);
+//    }
+//    else
+//    {
+//      *Y = static_cast<NumericType>(1.0 / Y->rows);
+//    }
+//  }
   DETECT_NUMERICAL_ERRORS(*Y);
 }
 
@@ -411,24 +441,9 @@ void SoftMax<NumClasses_, NumericType_>
          Y.type() == dLdY.type() && dLdY.type() == dLdX->type());
   DETECT_NUMERICAL_ERRORS(Y);
   DETECT_NUMERICAL_ERRORS(dLdY);
-  // Compute index of output category.
-  int classIdx = 0;
-  {
-    cv::MatConstIterator_<NumericType> y = Y.begin<NumericType>();
-    const cv::MatConstIterator_<NumericType> yEnd = Y.end<NumericType>();
-    NumericType maxVal = *y;
-    int i = 1;
-    for (++y; y != yEnd; ++y, ++i)
-    {
-      if (*y > maxVal)
-      {
-        maxVal = *y;
-        classIdx = i;
-      }
-    }
-  }
-  cv::multiply(dLdY, Y, *dLdX, -1.0);
-  cv::scaleAdd(Y, Y.dot(dLdY), *dLdX, *dLdX);
+  // dLdX = Y (e - Y) dLdY
+  cv::multiply(dLdY, Y, *dLdX);
+  cv::scaleAdd(Y, -Y.dot(dLdY), *dLdX, *dLdX);
   DETECT_NUMERICAL_ERRORS(*dLdX);
 }
 
@@ -444,34 +459,23 @@ template <typename NNType>
 const cv::Mat* NLLCriterion::
 SampleLoss(const NNType& nn, const cv::Mat& xi, const cv::Mat& yi, double* loss, int* error)
 {
+  using detail::MaxElement;
   typedef typename NNType::NumericType NumericType;
   DETECT_NUMERICAL_ERRORS(xi);
   const cv::Mat* yOut = nn.Forward(xi);
+  const double minProb = 1e-16;
+  (*yOut) += cv::Scalar::all(minProb);
+  (*yOut) *= 1.0 / (1.0 + (yOut->rows * minProb));
   DETECT_NUMERICAL_ERRORS(*yOut);
   // Find max class label.
-  int label = 0;
-  double maxP = yOut->at<NumericType>(0, 0);
-  const int yOutSize = yOut->rows;
-  for (int i = 1; i < yOutSize; ++i) {
-    const double p = yOut->at<NumericType>(i, 0);
-    if (p > maxP)
-    {
-      maxP = p;
-      label = i;
-    }
-  }
+  int label;
+  NumericType maxP;
+  MaxElement(*yOut, &maxP, &label);
   const int trueLabel = yi.at<unsigned char>(0, 0);
   *error = (trueLabel != label);
-  const NumericType yLabel = yOut->at<NumericType>(trueLabel, 0);
-  assert(yLabel >= 0);
-  if (0 == yLabel)
-  {
-    *loss = 1e100;
-  }
-  else
-  {
-    *loss = -std::log(yLabel);
-  }
+  const NumericType pClass = yOut->at<NumericType>(trueLabel, 0);
+  assert(pClass > 0);
+  *loss = -std::log(pClass);
   return yOut;
 }
 
@@ -506,8 +510,9 @@ SampleGradient(NNType* nn, const cv::Mat& xi, const cv::Mat& yi,
   DETECT_NUMERICAL_ERRORS(*yOut);
   // Compute loss gradient to get this party started.
   const int trueLabel = yi.at<unsigned char>(0, 0);
-  const NumericType pClass = std::max(yOut->at<NumericType>(trueLabel, 0),
-                                      static_cast<NumericType>(1e-16));
+  const double minProb = 1e-20;
+  const NumericType pClass =
+    static_cast<NumericType>((minProb + yOut->at<NumericType>(trueLabel, 0)) / (1.0 + minProb));
   assert(pClass > 0);
   const NumericType nllGrad = static_cast<NumericType>(-1.0 / pClass);
   *dLdY = cv::Scalar::all(0);

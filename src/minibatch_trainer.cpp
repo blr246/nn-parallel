@@ -108,14 +108,6 @@ UpdateDelegator::UpdateDelegator(const WeightExponentialDecay& learningRate_, do
   latestWLock()
 {}
 
-UpdateDelegatorWrapper::UpdateDelegatorWrapper()
-  : ud(NULL)
-{}
-
-UpdateDelegatorWrapper::UpdateDelegatorWrapper(UpdateDelegator* ud_)
-  : ud(ud_)
-{}
-
 } // end ns nn
 using namespace nn;
 } // end ns blr

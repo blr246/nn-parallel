@@ -33,6 +33,9 @@
 #include <utility>
 #include <cstring>
 #include <iostream>
+#if defined(__APPLE__) || defined(UNIX)
+#include <sys/types.h>
+#endif
 
 namespace blr
 {
@@ -53,8 +56,7 @@ public:
 
   MiniBatchTrainer(NNType* nn_,
                    WeightUpdateType weightUpdater_,
-                   const Dataset* dataTrain_, const Dataset* dataTest_,
-                   int numBatches_, int batchSize_);
+                   const Dataset* dataTrain_, const Dataset* dataTest_, int batchSize_);
   MiniBatchTrainer(const MiniBatchTrainer& rhs);
 
   void RefreshSampleIdx();
@@ -69,7 +71,6 @@ private:
   WeightUpdateType weightUpdater;
   const Dataset* dataTrain;
   const Dataset* dataTest;
-  int numBatches;
   int batchSize;
   int sampleIdx;
   cv::Mat dLdY;
@@ -149,17 +150,19 @@ private:
   mutable OmpLock latestWLock;
 };
 
-struct UpdateDelegatorWrapper
+/// <summary>Share a copiable WeightUpdatePtr* with reference syntax.</summary>
+template<typename WeightUpdateType>
+struct WeightUpdatePtrWrapper
 {
-  UpdateDelegatorWrapper();
-  UpdateDelegatorWrapper(UpdateDelegator* ud_);
+  WeightUpdatePtrWrapper();
+  WeightUpdatePtrWrapper(WeightUpdateType* wut_);
 
   template <typename NNType>
   void SubmitGradient(CvMatPtr update, NNType* nn);
   template <typename NNType>
   void ApplyWTo(NNType* nn) const;
 
-  UpdateDelegator* ud;
+  WeightUpdateType* wut;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -171,13 +174,11 @@ template <typename NNType_, typename WeightUpdateType_>
 MiniBatchTrainer<NNType_, WeightUpdateType_>
 ::MiniBatchTrainer(NNType* nn_,
                    WeightUpdateType weightUpdater_,
-                   const Dataset* dataTrain_, const Dataset* dataTest_,
-                   int numBatches_, int batchSize_)
+                   const Dataset* dataTrain_, const Dataset* dataTest_, int batchSize_)
 : nn(nn_),
   weightUpdater(weightUpdater_),
   dataTrain(dataTrain_),
   dataTest(dataTest_),
-  numBatches(numBatches_),
   batchSize(batchSize_),
   sampleIdx(RandBound(dataTrain->first.rows)),
   dLdY(NNType::NumClasses, 1, CvType)
@@ -190,7 +191,6 @@ MiniBatchTrainer<NNType_, WeightUpdateType_>
   weightUpdater(rhs.weightUpdater),
   dataTrain(rhs.dataTrain),
   dataTest(rhs.dataTest),
-  numBatches(rhs.numBatches),
   batchSize(rhs.batchSize),
   sampleIdx(rhs.sampleIdx),
   dLdY(NNType::NumClasses, 1, CvType)
@@ -210,20 +210,37 @@ void MiniBatchTrainer<NNType_, WeightUpdateType_>
   nn = nn_;
 }
 
+namespace detail
+{
+inline
+int GetThreadId()
+{
+#if defined(__APPLE__) || defined(UNIX)
+  return static_cast<int>(gettid());
+#else
+  return static_cast<int>(::GetCurrentThreadId());
+#endif
+}
+}
+
 template <typename NNType_, typename WeightUpdateType_>
 void MiniBatchTrainer<NNType_, WeightUpdateType_>
-::Run(int /*t*/)
+::Run(int t)
 {
+  using detail::GetThreadId;
+  Timer batchTimer;
   ScopedDropoutEnabler<NNType> dropoutEnabled(nn);
-  // Sync latest
-  weightUpdater.ApplyWTo(nn);
+  std::stringstream ssMsg;
+  const int threadId = GetThreadId();
 
   double sampleLoss;
   int sampleError;
   const int dataTrainSize = dataTrain->first.rows;
   const NumericType avgScale = static_cast<NumericType>(1.0 / batchSize);
   // Do one batch.
-//  std::cout << "Starting batch " << t << std::endl;
+  ssMsg.str("");
+  ssMsg << "Thread " << threadId << " starting batch " << t << "\n";
+  Log(ssMsg.str(), &std::cout);
   const CvMatPtr WPtr = nn->GetWPtr();
   DETECT_NUMERICAL_ERRORS(*WPtr);
   // Get a gradient to accumulate into.
@@ -232,6 +249,8 @@ void MiniBatchTrainer<NNType_, WeightUpdateType_>
   *dwAccum = cv::Scalar::all(0);
   for (int batchIdxJ = 0; batchIdxJ < batchSize; ++batchIdxJ, ++sampleIdx)
   {
+    // Sync latest
+    weightUpdater.ApplyWTo(nn);
     nn->RefreshDropoutMask();
     sampleIdx %= dataTrainSize;
     const cv::Mat xi = dataTrain->first.row(sampleIdx).t();
@@ -245,6 +264,11 @@ void MiniBatchTrainer<NNType_, WeightUpdateType_>
   // Compute and submit this update.
   DETECT_NUMERICAL_ERRORS(*dwAccum);
   weightUpdater.SubmitGradient(dwAccum, nn);
+
+  ssMsg.str("");
+  ssMsg << "Thread " << threadId << " completed batch " << t << " after "
+        << batchTimer.GetTime() << "S\n";
+  Log(ssMsg.str(), &std::cout);
 }
 
 template <typename T>
@@ -400,7 +424,6 @@ CvMatPtr UpdateDelegator::ProcessUpdates(const std::vector<CvMatPtr>& myUpdates,
   latestWPtr->copyTo(*newWPtr);
   LogMatrix(*newWPtr, "Processing new W", &std::cout);
   const size_t numUpdates = myUpdates.size();
-//  const NumericType avgScale = static_cast<NumericType>(1.0 / numUpdates);
   std::stringstream ssMsg;
   for (size_t i = 0; i < numUpdates; ++i, ++t)
   {
@@ -419,12 +442,11 @@ CvMatPtr UpdateDelegator::ProcessUpdates(const std::vector<CvMatPtr>& myUpdates,
     ssMsg << "||delta_" << std::dec << t << "||^2 = " << deltaWNormSq << "\n";
     Log(ssMsg.str(), &std::cout);
     (*newWPtr) += *deltaW;
-//    cv::scaleAdd(*update, avgScale, *newWPtr, *newWPtr);
-    nn->SetWPtr(newWPtr);
-    DETECT_NUMERICAL_ERRORS(*newWPtr);
-    nn->TruncateL2(static_cast<NumericType>(maxL2));
     DETECT_NUMERICAL_ERRORS(*newWPtr);
   }
+  nn->SetWPtr(newWPtr);
+  nn->TruncateL2(static_cast<NumericType>(maxL2));
+  DETECT_NUMERICAL_ERRORS(*newWPtr);
   ssMsg.str("");
   ssMsg << "||W_" << std::dec << t << "||^2 = " << newWPtr->dot(*newWPtr) << "\n";
   Log(ssMsg.str(), &std::cout);
@@ -433,16 +455,32 @@ CvMatPtr UpdateDelegator::ProcessUpdates(const std::vector<CvMatPtr>& myUpdates,
   return newWPtr;
 }
 
+template <typename WeightUpdateType>
+WeightUpdatePtrWrapper<WeightUpdateType>::WeightUpdatePtrWrapper()
+  : wut(NULL)
+{}
+
+template <typename WeightUpdateType>
+WeightUpdatePtrWrapper<WeightUpdateType>::WeightUpdatePtrWrapper(WeightUpdateType* wut_)
+  : wut(wut_)
+{}
+
+template <typename WeightUpdateType>
 template <typename NNType>
-void UpdateDelegatorWrapper::SubmitGradient(CvMatPtr update, NNType* nn)
+inline
+void WeightUpdatePtrWrapper<WeightUpdateType>
+::SubmitGradient(CvMatPtr update, NNType* nn)
 {
-  ud->SubmitGradient(update, nn);
+  wut->SubmitGradient(update, nn);
 }
 
+template <typename WeightUpdateType>
 template <typename NNType>
-void UpdateDelegatorWrapper::ApplyWTo(NNType* nn) const
+inline
+void WeightUpdatePtrWrapper<WeightUpdateType>
+::ApplyWTo(NNType* nn) const
 {
-  ud->ApplyWTo(nn);
+  wut->ApplyWTo(nn);
 }
 
 } // end ns nn

@@ -75,6 +75,27 @@ void ComputeDatasetLossParallel(const Dataset& dataset,
   *errors = std::accumulate(errorsPerThread.begin(), errorsPerThread.end(), 0);
 }
 
+template <typename NNType>
+void ReportTrainTestLossErrors(const Dataset& dataTrain, const Dataset& dataTest,
+                               const UpdateDelegator& updateDelegator,
+                               std::vector<NNType>* networks)
+{
+  double lossTrain;
+  int errorsTrain;
+  std::stringstream ssMsg;
+  ComputeDatasetLossParallel(dataTrain, updateDelegator, networks, &lossTrain, &errorsTrain);
+  ssMsg << "TRAIN loss:\n"
+           "loss: " << lossTrain << ", errors: " << std::dec << errorsTrain << "\n";
+  Log(ssMsg.str(), &std::cout);
+  double lossTest;
+  int errorsTest;
+  ComputeDatasetLossParallel(dataTest, updateDelegator, networks, &lossTest, &errorsTest);
+  ssMsg.str("");
+  ssMsg << "TEST loss:\n"
+           "loss: " << lossTest << ", errors: " << std::dec << errorsTest << "\n";
+  Log(ssMsg.str(), &std::cout);
+}
+
 enum
 {
   NN_ERROR_NONE           = 0,
@@ -122,14 +143,17 @@ int main(int argc, char** argv)
   enum { NumBatches = 50, };
   enum { BatchSize = 100, };
 #endif
+//  enum { SyncEveryNBatches = 32, };
+//  enum { NumWarmStartEpochs = 5, };
   enum { SyncEveryNBatches = 32, };
-  enum { NumWarmStartEpochs = 5, };
+  enum { NumWarmStartEpochs = 0, };
   typedef float NumericType;
   enum { CvType = NumericTypeToCvType<NumericType>::CvType, };
 //  typedef DualLayerNNSoftmax<784, 10, 800, 20, 50, NumericType> NNType;
   typedef DualLayerNNSoftmax<784, 10, 800, 0, 0, NumericType> NNType;
-  const double maxL2 = 10.0;
-  UpdateDelegator updateDelegator(WeightExponentialDecay(0.05, 0.998, 0.5, 0.99, 0.001), maxL2);
+  const double maxL2 = 15.0;
+//  UpdateDelegator updateDelegator(WeightExponentialDecay(10.0, 0.998, 0.5, 0.99, 0.0), maxL2);
+  UpdateDelegator updateDelegator(WeightExponentialDecay(1.0, 0.998, 0.5, 0.99, 0.0), maxL2);
   const int numNetworks = omp_get_num_procs();
 //  enum { ForceTestThreads = 32, };
 //  const int numNetworks = ForceTestThreads;
@@ -228,10 +252,11 @@ int main(int argc, char** argv)
   // There is only one update delegator for threadsafe updates.
   updateDelegator.Initialize(&networks[0], &dataTrain, &dataTest);
   // Setup mini batches.
+  typedef WeightUpdatePtrWrapper<UpdateDelegator> UpdateDelegatorWrapper;
   typedef MiniBatchTrainer<NNType, UpdateDelegatorWrapper> MiniBatchTrainerType;
   std::vector<MiniBatchTrainerType> miniBatchTrainers(
       numNetworks, MiniBatchTrainerType(NULL, UpdateDelegatorWrapper(&updateDelegator),
-                                        &dataTrain, &dataTest, NumBatches, BatchSize));
+                                        &dataTrain, &dataTest, BatchSize));
   for (int i = 0; i < numNetworks; ++i)
   {
     NNType& nn = networks[i];
@@ -239,22 +264,7 @@ int main(int argc, char** argv)
     trainer.SetNN(&nn);
     trainer.RefreshSampleIdx();
   }
-  {
-    double lossTrain;
-    int errorsTrain;
-    ComputeDatasetLossParallel(dataTrain, updateDelegator, &networks, &lossTrain, &errorsTrain);
-    ssMsg.str("");
-    ssMsg << "TRAIN loss initial:\n"
-             "loss: " << lossTrain << ", errors: " << std::dec << errorsTrain << "\n";
-    Log(ssMsg.str(), &std::cout);
-    double lossTest;
-    int errorsTest;
-    ComputeDatasetLossParallel(dataTest, updateDelegator, &networks, &lossTest, &errorsTest);
-    ssMsg.str("");
-    ssMsg << "TEST loss initial:\n"
-             "loss: " << lossTest << ", errors: " << std::dec << errorsTest << "\n";
-    Log(ssMsg.str(), &std::cout);
-  }
+  ReportTrainTestLossErrors(dataTrain, dataTest, updateDelegator, &networks);
   // Run a few single-threaded epochs.
   int batchIdx = 0;
   for (; batchIdx < NumWarmStartEpochs; ++batchIdx)
@@ -264,6 +274,7 @@ int main(int argc, char** argv)
     ssMsg << "Warm start epoch " << (batchIdx + 1) << " of " << NumWarmStartEpochs << "\n";
     Log(ssMsg.str(), &std::cout);
     trainer.Run(batchIdx);
+    ReportTrainTestLossErrors(dataTrain, dataTest, updateDelegator, &networks);
   }
   // Parallel pandemonium!
   const int numOuterIters = (NumBatches + SyncEveryNBatches - 1) / SyncEveryNBatches;
@@ -282,22 +293,7 @@ int main(int argc, char** argv)
       trainer.Run(parallelBatchIdx);
     }
     updateDelegator.Flush(&networks[0]);
-    {
-      double lossTrain;
-      int errorsTrain;
-      ComputeDatasetLossParallel(dataTrain, updateDelegator, &networks, &lossTrain, &errorsTrain);
-      ssMsg.str("");
-      ssMsg << "TRAIN loss:\n"
-               "loss: " << lossTrain << ", errors: " << std::dec << errorsTrain << "\n";
-      Log(ssMsg.str(), &std::cout);
-      double lossTest;
-      int errorsTest;
-      ComputeDatasetLossParallel(dataTest, updateDelegator, &networks, &lossTest, &errorsTest);
-      ssMsg.str("");
-      ssMsg << "TEST loss:\n"
-               "loss: " << lossTest << ", errors: " << std::dec << errorsTest << "\n";
-      Log(ssMsg.str(), &std::cout);
-    }
+    ReportTrainTestLossErrors(dataTrain, dataTest, updateDelegator, &networks);
   }
   return 0;
 }
